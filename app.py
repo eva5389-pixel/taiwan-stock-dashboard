@@ -383,7 +383,7 @@ with tabs[0]:
                 else:
                     flow_est=np.nan
                 gap=(current/flow_est-1)*100 if pd.notna(flow_est) and flow_est else np.nan
-                foreign_cost_rows.append({"期間":f"{n}日","六大外資買進張數":buy,"六大外資賣出張數":sell,"六大外資淨買賣":net,"六大外資合計估算成本":flow_est,"現價距估算成本%":gap,"全排行平均買超成本（非六大外資）":ranked_cost})
+                foreign_cost_rows.append({"期間":f"{n}日","六大外資買進張數":buy,"六大外資賣出張數":sell,"六大外資淨買賣":net,"六大外資合計估算成本":flow_est,"現價距估算成本%":gap})
         if foreign_cost_rows:
             fc=pd.DataFrame(foreign_cost_rows)
             st.dataframe(fc,use_container_width=True,hide_index=True)
