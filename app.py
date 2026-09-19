@@ -127,6 +127,22 @@ def market_costs(h):
         out[n]=np.average(d["Close"],weights=d["Volume"]) if len(d) and d["Volume"].sum()>0 else np.nan
     return out
 
+@st.cache_data(ttl=900)
+def fubon_period_summary(symbol, suffix):
+    """讀取 eBrokerDJ 公開期間主力頁的合計買/賣超與平均成本。"""
+    url=f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco_{symbol}_{suffix}.djhtm"
+    try:
+        r=requests.get(url,headers=HEADERS,timeout=15); r.raise_for_status()
+        r.encoding=r.apparent_encoding
+        txt=BeautifulSoup(r.text,"html.parser").get_text(" ",strip=True)
+        mb=re.search(r"平均買超成本\s*([\d,]+(?:\.\d+)?)",txt)
+        ms=re.search(r"平均賣超成本\s*([\d,]+(?:\.\d+)?)",txt)
+        buy=float(mb.group(1).replace(",","")) if mb else np.nan
+        sell=float(ms.group(1).replace(",","")) if ms else np.nan
+        return buy,sell,url,None
+    except Exception as e:
+        return np.nan,np.nan,url,str(e)
+
 def parse_rank_average_cost(text, label, current_price=np.nan):
     """解析公開排行平均成本；異常值直接視為無可靠資料，避免把排名數字誤認成股價。"""
     if not text: return np.nan
@@ -353,6 +369,19 @@ with tabs[0]:
             st.warning("目前沒有足夠的 OHLC 行情資料可以繪製 K 線。")
         st.markdown("### 六大外資分點進出成本")
         hist,hist_url,hist_err=foreign_history(symbol)
+        # 立即回補公開期間成本：eBrokerDJ 的 _3 / _4 頁可提供較長期間的全券商主力平均買超成本。
+        # 這不是六大外資專屬成本，因此獨立呈現，不混入六大外資歷史估算。
+        p3b,p3s,p3url,p3err=fubon_period_summary(symbol,3)
+        p4b,p4s,p4url,p4err=fubon_period_summary(symbol,4)
+        period_ref=pd.DataFrame([
+            {"公開期間":"較長期A","全券商主力平均買超成本":p3b,"平均賣超成本":p3s},
+            {"公開期間":"較長期B","全券商主力平均買超成本":p4b,"平均賣超成本":p4s},
+        ])
+        if period_ref[["全券商主力平均買超成本","平均賣超成本"]].notna().any().any():
+            st.markdown("#### 公開歷史主力平均成本（立即可用）")
+            st.dataframe(period_ref,use_container_width=True,hide_index=True)
+            st.caption("這兩列直接取自 eBrokerDJ 公開期間主力頁，屬全券商排行的合計平均成本，不是六大外資專屬 30／60 日成本；六大外資 30／60 日仍由每日歷史資料逐步回補。")
+
         # 5/20/30/60 日欄位固定顯示；歷史不足時明確標示「累積中」，不整塊隱藏。
         hist_rows=[]
         for dn in [5,20,30,60]:
