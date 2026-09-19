@@ -369,37 +369,10 @@ with tabs[0]:
             st.warning("目前沒有足夠的 OHLC 行情資料可以繪製 K 線。")
         st.markdown("### 六大外資分點進出成本")
         hist,hist_url,hist_err=foreign_history(symbol)
-        # 立即回補公開期間成本：eBrokerDJ 的 _3 / _4 頁可提供較長期間的全券商主力平均買超成本。
-        # 這不是六大外資專屬成本，因此獨立呈現，不混入六大外資歷史估算。
-        p3b,p3s,p3url,p3err=fubon_period_summary(symbol,3)
-        p4b,p4s,p4url,p4err=fubon_period_summary(symbol,4)
-        period_ref=pd.DataFrame([
-            {"公開期間":"較長期A","全券商主力平均買超成本":p3b,"平均賣超成本":p3s},
-            {"公開期間":"較長期B","全券商主力平均買超成本":p4b,"平均賣超成本":p4s},
-        ])
-        if period_ref[["全券商主力平均買超成本","平均賣超成本"]].notna().any().any():
-            st.markdown("#### 公開歷史主力平均成本（立即可用）")
-            st.dataframe(period_ref,use_container_width=True,hide_index=True)
-            st.caption("這兩列直接取自 eBrokerDJ 公開期間主力頁，屬全券商排行的合計平均成本，不是六大外資專屬 30／60 日成本；六大外資 30／60 日仍由每日歷史資料逐步回補。")
 
-        # 5/20/30/60 日欄位固定顯示；歷史不足時明確標示「累積中」，不整塊隱藏。
-        hist_rows=[]
-        for dn in [5,20,30,60]:
-            hc,used=flow_weighted_cost(hist,h,dn) if not hist.empty else (np.nan,0)
-            hist_rows.append({
-                "期間":f"{dn}日",
-                "六大外資流量加權估算成本":(round(hc,2) if pd.notna(hc) else "累積中"),
-                "可配對交易日":used,
-                "現價距估算成本%":(round((current/hc-1)*100,2) if pd.notna(hc) and hc else "—")
-            })
-        st.markdown("#### 5／20／30／60 日六大外資平均成本")
-        st.dataframe(pd.DataFrame(hist_rows),use_container_width=True,hide_index=True)
-        if not hist.empty:
-            st.caption(f"目前已累積 {hist['date'].dt.date.nunique()} 個交易日；資料由 GitHub Actions 每個平日自動更新。未滿指定天數時，成本只使用目前可配對的歷史日數。")
-        else:
-            st.info("歷史資料庫已建立，但目前尚未累積到這檔股票的有效快照，因此先顯示「累積中」。")
-        st.caption("成本改用摩根士丹利、摩根大通、美林、高盛、瑞銀、花旗環球的分點進出資料；不再把市場成交量加權成本當成外資成本。")
-        foreign_cost_rows=[]
+        # 單一合併表：1/5 日使用目前公開分點資料；20/30/60 日優先使用已累積的每日歷史。
+        # 歷史尚不足時仍以現有可配對交易日計算並清楚標示，不再顯示上下兩張重複表格。
+        rows=[]
         for n in [1,5]:
             txt,src,err=fubon_stock_brokers(symbol,n)
             if txt:
@@ -408,23 +381,46 @@ with tabs[0]:
                 buy=float(vb["買進張數"].sum()) if not vb.empty else np.nan
                 sell=float(vb["賣出張數"].sum()) if not vb.empty else np.nan
                 net=buy-sell if pd.notna(buy) and pd.notna(sell) else np.nan
-                mb=re.search(r"平均買超成本\s*([\d.]+)",txt)
-                ranked_cost=float(mb.group(1)) if mb else np.nan
-                # 分點進出估算成本：以該期間六大外資買進張數為權重概念，價格端採期間日線典型價成交量加權。
-                # 公開排行未提供六家逐日成交金額，因此這是六大外資「合計估算成本」，不是個別券商成本。
                 d=h.tail(n).copy()
                 if not d.empty and d["Volume"].fillna(0).sum()>0:
                     typical=(d["High"]+d["Low"]+d["Close"])/3
-                    flow_est=float(np.average(typical,weights=d["Volume"]))
+                    cost=float(np.average(typical,weights=d["Volume"]))
                 else:
-                    flow_est=np.nan
-                gap=(current/flow_est-1)*100 if pd.notna(flow_est) and flow_est else np.nan
-                foreign_cost_rows.append({"期間":f"{n}日","六大外資買進張數":buy,"六大外資賣出張數":sell,"六大外資淨買賣":net,"六大外資合計估算成本":flow_est,"現價距估算成本%":gap})
-        if foreign_cost_rows:
-            fc=pd.DataFrame(foreign_cost_rows)
-            st.dataframe(fc,use_container_width=True,hide_index=True)
-            st.caption("⚠️ 不再顯示個別外資成本。六大外資合計估算成本以期間市場成交重心估算，搭配六大外資分點買賣張數觀察；它不是券商真實庫存成本。")
-            st.markdown("**估算方法：** `Σ（每日六大外資買進張數 × 當日估算成交價）÷ Σ每日六大外資買進張數`。目前公開來源尚未累積足夠逐日歷史，因此先以期間市場成交重心顯示合計估算；之後累積每日資料可升級為真正的分點流量加權估算。")
+                    cost=np.nan
+                rows.append({"期間":f"{n}日","六大外資買進張數":buy,"六大外資賣出張數":sell,
+                             "六大外資淨買賣":net,"六大外資估算成本":cost,
+                             "現價距估算成本%":((current/cost-1)*100 if pd.notna(cost) and cost else np.nan),
+                             "可配對交易日":n if pd.notna(cost) else 0})
+
+        for n in [20,30,60]:
+            cost,used=flow_weighted_cost(hist,h,n) if not hist.empty else (np.nan,0)
+            if not hist.empty:
+                hd=hist.sort_values("date").groupby("date",as_index=False)[["buy_lots","sell_lots","net_lots"]].sum().tail(n)
+                buy=float(hd["buy_lots"].sum()) if not hd.empty else np.nan
+                sell=float(hd["sell_lots"].sum()) if not hd.empty else np.nan
+                net=float(hd["net_lots"].sum()) if not hd.empty else np.nan
+            else:
+                buy=sell=net=np.nan
+            rows.append({"期間":f"{n}日","六大外資買進張數":buy,"六大外資賣出張數":sell,
+                         "六大外資淨買賣":net,"六大外資估算成本":cost,
+                         "現價距估算成本%":((current/cost-1)*100 if pd.notna(cost) and cost else np.nan),
+                         "可配對交易日":used})
+
+        fc=pd.DataFrame(rows)
+        st.dataframe(fc,use_container_width=True,hide_index=True,
+            column_config={
+                "六大外資估算成本":st.column_config.NumberColumn(format="%.2f"),
+                "現價距估算成本%":st.column_config.NumberColumn(format="%.2f%%"),
+                "六大外資買進張數":st.column_config.NumberColumn(format="%.0f"),
+                "六大外資賣出張數":st.column_config.NumberColumn(format="%.0f"),
+                "六大外資淨買賣":st.column_config.NumberColumn(format="%.0f"),
+            })
+        if not hist.empty:
+            st.caption(f"每日歷史目前可用 {hist['date'].dt.date.nunique()} 個交易日。20／30／60 日會用已回補／累積的實際分點歷史計算；可配對交易日會直接顯示資料完整度。")
+        else:
+            st.caption("1／5 日已有公開分點資料；20／30／60 日需等歷史回補資料寫入後才會產生六大外資專屬成本。")
+        st.caption("估算公式：Σ（每日六大外資買進張數 × 當日估算成交價）÷ Σ每日六大外資買進張數。")
+
     else: st.error("行情取得失敗："+str(price_err))
 
 with tabs[1]:
