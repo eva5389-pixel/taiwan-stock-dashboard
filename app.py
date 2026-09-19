@@ -100,6 +100,18 @@ def market_costs(h):
         out[n]=np.average(d["Close"],weights=d["Volume"]) if len(d) and d["Volume"].sum()>0 else np.nan
     return out
 
+def parse_rank_average_cost(text, label, current_price=np.nan):
+    """解析公開排行平均成本；異常值直接視為無可靠資料，避免把排名數字誤認成股價。"""
+    if not text: return np.nan
+    m=re.search(re.escape(label)+r"[^0-9]{0,20}([0-9]+(?:\\.[0-9]+)?)",text)
+    if not m: return np.nan
+    try: v=float(m.group(1))
+    except: return np.nan
+    if pd.notna(current_price) and current_price>0:
+        # 排行平均成交成本不應與當期股價差數個數量級；寬鬆保留 20%~500% 區間。
+        if v < current_price*0.20 or v > current_price*5: return np.nan
+    return v
+
 def foreign_broker_cost_estimate(h, broker_df, days):
     """用區間分點買賣張數 + 日線價格估計各外資分點的累積持倉成本。"""
     if h.empty or broker_df.empty: return broker_df.copy(), np.nan
@@ -325,12 +337,13 @@ with tabs[0]:
                 net=buy-sell if pd.notna(buy) and pd.notna(sell) else np.nan
                 mb=re.search(r"平均買超成本\s*([\d.]+)",txt)
                 ranked_cost=float(mb.group(1)) if mb else np.nan
-                foreign_cost_rows.append({"期間":f"{n}日","六大外資買進張數":buy,"六大外資賣出張數":sell,"六大外資淨買賣":net,"六大外資個別成本":"資料不足","公開排行平均買超成本":ranked_cost})
+                foreign_cost_rows.append({"期間":f"{n}日","六大外資買進張數":buy,"六大外資賣出張數":sell,"六大外資淨買賣":net,"六大外資個別成本":"資料不足","全排行平均買超成本（非六大外資）":ranked_cost})
         if foreign_cost_rows:
             fc=pd.DataFrame(foreign_cost_rows)
             st.dataframe(fc,use_container_width=True,hide_index=True)
             st.caption("⚠️ 六大外資的買進／賣出／淨買賣可由分點排行取得；但個別分點缺少成交金額或逐筆成交價，因此個別成本顯示「資料不足」，不再用市場價格模型代替。")
             st.markdown("**真正的外資成本公式：** `外資成本 = 外資分點累計買進金額 ÷ 外資分點累計買進股數`。只有張數時，必須再取得逐日分點成交價或成交金額。")
+            st.info("可以用分點進出『估算』成本：每天保存各分點買進張數，搭配當日成交均價/VWAP，再用 Σ(每日買進張數×當日估算成交價) ÷ Σ每日買進張數。這能做 5/20/60 日估算成本，但仍不是券商真實成交成本。")
     else: st.error("行情取得失敗："+str(price_err))
 
 with tabs[1]:
