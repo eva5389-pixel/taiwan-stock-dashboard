@@ -29,12 +29,12 @@ BROKER_IDS={"台灣摩根士丹利":"1470","摩根大通":"8440","美商高盛":
 
 def fetch_broker_history(symbol, broker, broker_id):
     """抓單一分點歷史頁。公開頁日期格式為 YYYY/MM/DD。"""
-    url=f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco0/zco0.djhtm?BHID={broker_id}&a={symbol}&b={broker_id}"
+    url=f"https://justdata.moneydj.com/z/zc/zco/zco0/zco0.djhtm?BHID={broker_id}&a={symbol}&b={broker_id}"
     r=requests.get(url,headers=HEADERS,timeout=20); r.raise_for_status()
     r.encoding=r.apparent_encoding
     txt=BeautifulSoup(r.text,"html.parser").get_text(" ",strip=True)
     # 日期 買進 賣出 買賣總額 買賣超
-    pat=re.compile(r"(?<!\\d)(20\\d{2}/\\d{2}/\\d{2})\\s+([\\d,]+)\\s+([\\d,]+)\\s+([\\d,]+)\\s+(-?[\\d,]+)")
+    pat=re.compile(r"(?<!\d)(20\d{2}/\d{2}/\d{2})\s+([\d,]+)\s+([\d,]+)\s+([\d,]+)\s+(-?[\d,]+)")
     rows=[]
     for ds,buy_s,sell_s,total_s,net_s in pat.findall(txt):
         try: dt=datetime.strptime(ds,"%Y/%m/%d").date().isoformat()
