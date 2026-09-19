@@ -577,7 +577,39 @@ with tabs[4]:
             opt["時間價值"]=vals.map(lambda x:x[1])
             opt["時間價值占權利金%"]=np.where(opt[close_c]>0,opt["時間價值"]/opt[close_c]*100,np.nan)
             showo=[c for c in [expiry_c,strike_c,cp_c,close_c] if c]+["內涵價值","時間價值","時間價值占權利金%"]
+            # 標記目前成交量/未平倉口數最大的契約，並以外資偏空部位作為「疑似避險」提示。
+            vol_c=next((c for c in oc if str(c)=="Volume" or "成交量" in str(c)),None)
+            oi_c=next((c for c in oc if str(c)=="Open Interest" or "未平倉" in str(c)),None)
+            if vol_c:
+                opt[vol_c]=pd.to_numeric(opt[vol_c].astype(str).str.replace(",","",regex=False),errors="coerce")
+            if oi_c:
+                opt[oi_c]=pd.to_numeric(opt[oi_c].astype(str).str.replace(",","",regex=False),errors="coerce")
+            opt["標記"]=""
+            rank_c=oi_c if oi_c and opt[oi_c].notna().any() else vol_c
+            if rank_c and opt[rank_c].notna().any():
+                imax=opt[rank_c].idxmax()
+                opt.loc[imax,"標記"]="🔥 目前口數最多"
+            # 外資若在臺股期貨呈淨空，Put 僅列為可能避險觀察，不宣稱該選擇權就是外資持倉。
+            foreign_net=np.nan
+            try:
+                if ident and oi_net:
+                    fg=tx[tx[ident].astype(str).str.contains("外資",na=False)]
+                    if not fg.empty: foreign_net=float(fg[oi_net].sum())
+            except Exception:
+                pass
+            if pd.notna(foreign_net) and foreign_net<0:
+                puts=opt[opt[cp_c].astype(str).str.upper().str.startswith(("P","賣權"))].copy()
+                if not puts.empty:
+                    if rank_c and puts[rank_c].notna().any(): hedge_idx=puts[rank_c].idxmax()
+                    else: hedge_idx=puts["_距現貨"].idxmin()
+                    prior=str(opt.loc[hedge_idx,"標記"]).strip()
+                    opt.loc[hedge_idx,"標記"]=(prior+"｜" if prior else "")+"🛡️ 疑似外資避險觀察"
+            showo=["標記"]+[c for c in [expiry_c,strike_c,cp_c,close_c,vol_c,oi_c] if c]+["內涵價值","時間價值","時間價值占權利金%"]
             st.dataframe(opt[showo],use_container_width=True,hide_index=True)
+            if rank_c and opt[rank_c].notna().any():
+                rr=opt.loc[opt[rank_c].idxmax()]
+                st.success(f"🔥 目前口數最多：{rr.get(expiry_c,'')}｜履約價 {rr[strike_c]:,.0f}｜{rr[cp_c]}｜{rank_c} {rr[rank_c]:,.0f}")
+            st.caption("🛡️『疑似外資避險觀察』是把外資期貨淨空方向與 Put 契約活躍度交叉標示；TAIFEX 公開選擇權行情無法證明該契約實際由外資持有，因此只作觀察提示。")
             charto=opt[[strike_c,cp_c,"內涵價值","時間價值"]].copy()
             charto["契約"]=charto[strike_c].astype(str)+" "+charto[cp_c].astype(str)
             st.bar_chart(charto.set_index("契約")[["內涵價值","時間價值"]],horizontal=True)
