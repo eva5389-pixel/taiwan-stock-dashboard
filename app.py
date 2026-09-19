@@ -353,15 +353,22 @@ with tabs[0]:
             st.warning("目前沒有足夠的 OHLC 行情資料可以繪製 K 線。")
         st.markdown("### 六大外資分點進出成本")
         hist,hist_url,hist_err=foreign_history(symbol)
+        # 5/20/30/60 日欄位固定顯示；歷史不足時明確標示「累積中」，不整塊隱藏。
+        hist_rows=[]
+        for dn in [5,20,30,60]:
+            hc,used=flow_weighted_cost(hist,h,dn) if not hist.empty else (np.nan,0)
+            hist_rows.append({
+                "期間":f"{dn}日",
+                "六大外資流量加權估算成本":(round(hc,2) if pd.notna(hc) else "累積中"),
+                "可配對交易日":used,
+                "現價距估算成本%":(round((current/hc-1)*100,2) if pd.notna(hc) and hc else "—")
+            })
+        st.markdown("#### 5／20／30／60 日六大外資平均成本")
+        st.dataframe(pd.DataFrame(hist_rows),use_container_width=True,hide_index=True)
         if not hist.empty:
-            st.caption(f"已累積分點歷史：{hist['date'].dt.date.nunique()} 個交易日；資料會由 GitHub Actions 每個平日自動更新。")
-            hist_rows=[]
-            for dn in [5,20,30,60]:
-                hc,used=flow_weighted_cost(hist,h,dn)
-                hist_rows.append({"期間":f"{dn}日","六大外資流量加權估算成本":hc,"可配對交易日":used,"現價距估算成本%":((current/hc-1)*100 if pd.notna(hc) and hc else np.nan)})
-            st.dataframe(pd.DataFrame(hist_rows),use_container_width=True,hide_index=True)
+            st.caption(f"目前已累積 {hist['date'].dt.date.nunique()} 個交易日；資料由 GitHub Actions 每個平日自動更新。未滿指定天數時，成本只使用目前可配對的歷史日數。")
         else:
-            st.caption("每日分點歷史已啟用自動累積；目前尚未有此股票的歷史快照，累積後會自動顯示 5／20／30／60 日流量加權估算成本。")
+            st.info("歷史資料庫已建立，但目前尚未累積到這檔股票的有效快照，因此先顯示「累積中」。")
         st.caption("成本改用摩根士丹利、摩根大通、美林、高盛、瑞銀、花旗環球的分點進出資料；不再把市場成交量加權成本當成外資成本。")
         foreign_cost_rows=[]
         for n in [1,5]:
