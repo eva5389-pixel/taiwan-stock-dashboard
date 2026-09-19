@@ -1,6 +1,7 @@
 import csv, re, requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlencode
 from pathlib import Path
 
 HEADERS={"User-Agent":"Mozilla/5.0"}
@@ -23,12 +24,41 @@ def fetch(symbol):
     return rows
 
 tz=timezone(timedelta(hours=8))
+
+BROKER_IDS={"台灣摩根士丹利":"1470","摩根大通":"8440","美商高盛":"1480","美林":"1440","新加坡商瑞銀":"1650","花旗環球":"1590"}
+
+def fetch_broker_history(symbol, broker, broker_id):
+    url=f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco0/zco0.djhtm?a={symbol}&b={broker_id}&BHID={broker_id}"
+    r=requests.get(url,headers=HEADERS,timeout=20); r.raise_for_status()
+    r.encoding=r.apparent_encoding
+    txt=BeautifulSoup(r.text,"html.parser").get_text(" ",strip=True)
+    pat=re.compile(r"(?<!\\d)(\\d{2}/\\d{2})\\s+([\\d,]+)\\s+([\\d,]+)")
+    now=datetime.now(tz); rows=[]
+    for md,buy_s,sell_s in pat.findall(txt):
+        m,d=map(int,md.split("/")); year=now.year if (m,d)<=(now.month,now.day) else now.year-1
+        try: dt=datetime(year,m,d,tzinfo=tz).date().isoformat()
+        except ValueError: continue
+        buy=int(buy_s.replace(",","")); sell=int(sell_s.replace(",",""))
+        rows.append({"date":dt,"symbol":symbol,"broker":broker,"buy_lots":buy,"sell_lots":sell,"net_lots":buy-sell})
+    return rows
+
+
 today=datetime.now(tz).date().isoformat()
 existing=[]
 if OUT.exists():
     with OUT.open(encoding="utf-8") as f: existing=list(csv.DictReader(f))
 seen={(r["date"],r["symbol"],r["broker"]) for r in existing}
 new=[]
+for symbol in WATCHLIST:
+    for broker,broker_id in BROKER_IDS.items():
+        try:
+            for row in fetch_broker_history(symbol,broker,broker_id):
+                key=(row["date"],row["symbol"],row["broker"])
+                if key not in seen:
+                    new.append(row); seen.add(key)
+        except Exception as e:
+            print("history",symbol,broker,e)
+
 for symbol in WATCHLIST:
     try:
         for broker,buy,sell,net in fetch(symbol):
