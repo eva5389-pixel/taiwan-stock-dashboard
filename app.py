@@ -93,6 +93,33 @@ def parse_fubon_brokers(text):
             out.append({"主要券商":name,"買進張數":np.nan,"賣出張數":np.nan,"淨買超":np.nan,"成交占比%":np.nan,"隔日沖判斷":"本期未進榜"})
     return pd.DataFrame(out)
 
+@st.cache_data(ttl=300)
+def foreign_history(symbol):
+    """讀取 GitHub Actions 每日累積的六大外資分點歷史。"""
+    url="https://raw.githubusercontent.com/eva5389-pixel/taiwan-stock-dashboard/main/data/foreign_broker_history.csv"
+    try:
+        d=pd.read_csv(url)
+        if d.empty: return pd.DataFrame(),url,None
+        d["symbol"]=d["symbol"].astype(str).str.replace(".0","",regex=False).str.zfill(4)
+        d=d[d["symbol"]==str(symbol).zfill(4)].copy()
+        d["date"]=pd.to_datetime(d["date"],errors="coerce")
+        return d.sort_values("date"),url,None
+    except Exception as e: return pd.DataFrame(),url,str(e)
+
+def flow_weighted_cost(history,h,days):
+    """用每日六大外資買進張數 × 當日日線典型價，估算合計流量加權成本。"""
+    if history.empty or h.empty: return np.nan,0
+    daily=history.groupby("date",as_index=False)["buy_lots"].sum().sort_values("date").tail(days)
+    px=h.copy().reset_index()
+    px=px.rename(columns={px.columns[0]:"date"})
+    px["date"]=pd.to_datetime(px["date"]).dt.normalize()
+    px["est_price"]=(px["High"]+px["Low"]+px["Close"])/3
+    daily["date"]=pd.to_datetime(daily["date"]).dt.normalize()
+    m=daily.merge(px[["date","est_price"]],on="date",how="inner")
+    m=m[(m["buy_lots"]>0)&m["est_price"].notna()]
+    if m.empty or m["buy_lots"].sum()<=0: return np.nan,len(m)
+    return float(np.average(m["est_price"],weights=m["buy_lots"])),len(m)
+
 def market_costs(h):
     out={}
     for n in [5,10,20,60]:
@@ -325,6 +352,16 @@ with tabs[0]:
         else:
             st.warning("目前沒有足夠的 OHLC 行情資料可以繪製 K 線。")
         st.markdown("### 六大外資分點進出成本")
+        hist,hist_url,hist_err=foreign_history(symbol)
+        if not hist.empty:
+            st.caption(f"已累積分點歷史：{hist['date'].dt.date.nunique()} 個交易日；資料會由 GitHub Actions 每個平日自動更新。")
+            hist_rows=[]
+            for dn in [5,20,60]:
+                hc,used=flow_weighted_cost(hist,h,dn)
+                hist_rows.append({"期間":f"{dn}日","六大外資流量加權估算成本":hc,"可配對交易日":used,"現價距估算成本%":((current/hc-1)*100 if pd.notna(hc) and hc else np.nan)})
+            st.dataframe(pd.DataFrame(hist_rows),use_container_width=True,hide_index=True)
+        else:
+            st.caption("每日分點歷史已啟用自動累積；目前尚未有此股票的歷史快照，累積後會自動顯示 5／20／60 日流量加權估算成本。")
         st.caption("成本改用摩根士丹利、摩根大通、美林、高盛、瑞銀、花旗環球的分點進出資料；不再把市場成交量加權成本當成外資成本。")
         foreign_cost_rows=[]
         for n in [1,5]:
