@@ -24,4 +24,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/foreign_broker_history.csv
           git diff --cached --quiet || git commit -m "Update daily foreign broker history"
-          git push
+          git pull --rebase origin main
+          git push origin HEAD:main
