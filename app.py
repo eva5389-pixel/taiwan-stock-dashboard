@@ -432,7 +432,7 @@ with tabs[0]:
                              "現價距估算成本%":((current/cost-1)*100 if pd.notna(cost) and cost else np.nan),
                              "可配對交易日":n if pd.notna(cost) else 0})
 
-        for n in [20,30,60]:
+        for n in [20,30,60,120,240]:
             cost,used=flow_weighted_cost(hist,h,n) if not hist.empty else (np.nan,0)
             if not hist.empty:
                 hd=hist.sort_values("date").groupby("date",as_index=False)[["buy_lots","sell_lots","net_lots"]].sum().tail(n)
@@ -456,16 +456,16 @@ with tabs[0]:
                 "六大外資淨買賣":st.column_config.NumberColumn(format="%.0f"),
             })
         if not hist.empty:
-            st.caption(f"每日歷史目前可用 {hist['date'].dt.date.nunique()} 個交易日。20／30／60 日會用已回補／累積的實際分點歷史計算；可配對交易日會直接顯示資料完整度。")
+            st.caption(f"每日歷史目前可用 {hist['date'].dt.date.nunique()} 個交易日。20／30／60／半年(120交易日)／一年(240交易日)會用已回補／累積的實際分點歷史計算；可配對交易日會直接顯示資料完整度。")
         else:
-            st.caption("1／5 日已有公開分點資料；20／30／60 日需等歷史回補資料寫入後才會產生六大外資專屬成本。")
+            st.caption("1／5 日已有公開分點資料；20／30／60／半年／一年需等歷史回補資料寫入後才會產生六大外資專屬成本。")
         st.caption("估算公式：Σ（每日六大外資買進張數 × 當日估算成交價）÷ Σ每日六大外資買進張數。")
 
         # 依成本、量價與外資流向產生「條件式」交易觀察，不把分點成本視為精確持倉成本。
         st.markdown("### 🧭 外資成本交易策略觀察")
         valid_fc=fc.dropna(subset=["六大外資估算成本"]).copy()
         if not valid_fc.empty:
-            pref=valid_fc[valid_fc["期間"].isin(["20日","60日"])]
+            pref=valid_fc[valid_fc["期間"].isin(["20日","60日","120日","240日"])]
             base=pref.iloc[-1] if not pref.empty else valid_fc.iloc[-1]
             cost=float(base["六大外資估算成本"])
             period=str(base["期間"])
