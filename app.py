@@ -609,14 +609,9 @@ with tabs[3]:
         for sym in rg["symbol"].tolist():
             sh=ah[ah["symbol"].astype(str).str.replace(".0","",regex=False).str.zfill(4)==sym].copy()
             try:
-                yh,_=yahoo_history(sym)
-                if not yh.empty:
-                    # yahoo_history 可能已把 Date 留在欄位；統一交給成本函式前建立可配對日期索引。
-                    if "Date" in yh.columns:
-                        yh=yh.set_index("Date")
-                    elif "date" in yh.columns:
-                        yh=yh.set_index("date")
-            except Exception: yh=pd.DataFrame()
+                _ticker,yh,_last,_err=stock_data(sym)
+            except Exception:
+                yh=pd.DataFrame()
             cost30,used30=flow_weighted_cost(sh,yh,30) if not sh.empty and not yh.empty else (np.nan,0)
             cost_rows.append({"symbol":sym,"分點30日估算成本":cost30,"分點成本實際日數":used30})
         rg=rg.merge(pd.DataFrame(cost_rows),on="symbol",how="left")
