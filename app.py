@@ -266,7 +266,7 @@ def twse_foreign_buy_rank():
         out=pd.DataFrame({"代號":d[code].astype(str).str.strip(),"名稱":d[name].astype(str).str.strip()})
         for label,col in [("外資買進股數",buy),("外資賣出股數",sell),("外資買賣超股數",net)]:
             out[label]=pd.to_numeric(d[col].astype(str).str.replace(",","",regex=False),errors="coerce") if col else np.nan
-        out=out[out["代號"].str.fullmatch(r"\\d{4}",na=False)].copy()
+        out=out[out["代號"].str.fullmatch(r"\d{4}",na=False)].copy()
         out["外資買超張數"]=out["外資買賣超股數"]/1000
         out=out[out["外資買超張數"]>0].sort_values("外資買超張數",ascending=False)
         return out,url,None
@@ -601,12 +601,12 @@ with tabs[3]:
         rg=rg.sort_values("net_lots",ascending=False)
         theme_map={"2330":"AI／先進製程／半導體","2317":"AI伺服器／電子代工","2454":"IC設計／AI邊緣運算","2382":"AI伺服器／電子代工","3231":"AI伺服器／電子代工","2308":"電源／AI伺服器","3017":"散熱／AI伺服器","2368":"PCB／AI伺服器","3189":"PCB／AI伺服器","2327":"被動元件／AI伺服器","2344":"記憶體","2408":"記憶體","6770":"記憶體／IC設計","3711":"封測／半導體","3037":"PCB／載板","6669":"散熱／伺服器","2376":"AI伺服器／板卡","2377":"AI伺服器／主機板","2357":"AI PC／伺服器","3661":"高速傳輸IC／半導體"}
         rg["題材"]=rg["symbol"].map(theme_map).fillna("—")
-        official=fr[["代號","名稱","外資買超張數"]].copy() if not fr.empty else pd.DataFrame()
+        official=fr[["代號","名稱","外資買進張數","外資賣出張數","外資買超張數"]].copy() if not fr.empty else pd.DataFrame()
         if not official.empty:
             official["代號"]=official["代號"].astype(str).str.zfill(4)
             rg=rg.merge(official,left_on="symbol",right_on="代號",how="left")
         else:
-            rg["代號"]=rg["symbol"]; rg["名稱"]=""; rg["外資買超張數"]=np.nan
+            rg["代號"]=rg["symbol"]; rg["名稱"]=""; rg["外資買進張數"]=np.nan; rg["外資賣出張數"]=np.nan; rg["外資買超張數"]=np.nan
         # 排行未進 TWSE 當日榜時，仍以固定追蹤清單補齊股票名稱。
         name_map={"2330":"台積電","2317":"鴻海","2454":"聯發科","2382":"廣達","3231":"緯創","2308":"台達電","3017":"奇鋐","2368":"金像電","3189":"景碩","2327":"國巨","2344":"華邦電","2408":"南亞科","6770":"力積電","3711":"日月光投控","3037":"欣興","6669":"緯穎","2376":"技嘉","2377":"微星","2357":"華碩","3661":"世芯-KY"}
         rg["名稱"]=rg["名稱"].replace("",np.nan).fillna(rg["symbol"].map(name_map)).fillna("—")
@@ -619,12 +619,12 @@ with tabs[3]:
         rg["籌碼訊號"]=rg.apply(sync_label,axis=1)
         rg=rg.rename(columns={"symbol":"代號","buy_lots":"六大分點買進張數","sell_lots":"六大分點賣出張數","net_lots":"六大分點淨買賣"})
         top_branch=st.slider("顯示分點排行前幾名",5,30,15,5,key="branch_rank_n")
-        cols=["代號","名稱","題材","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買超張數","籌碼訊號"]
+        cols=["代號","名稱","題材","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買進張數","外資賣出張數","外資買超張數","籌碼訊號"]
         display_rg=rg.head(top_branch)[cols].copy()
         # 全部轉成顯示字串，徹底避開 Streamlit Cloud / PyArrow 對 nullable dtype 的轉換差異。
         for c in ["代號","名稱","題材","籌碼訊號"]:
             display_rg[c]=display_rg[c].fillna("—").astype(str)
-        for c in ["六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買超張數"]:
+        for c in ["六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買進張數","外資賣出張數","外資買超張數"]:
             nums=pd.to_numeric(display_rg[c],errors="coerce")
             display_rg[c]=nums.map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—").astype(str)
         # 用 HTML table 顯示，避開 Streamlit dataframe -> PyArrow 的序列化路徑。
