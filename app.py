@@ -526,8 +526,13 @@ with tabs[3]:
         st.success(f"{stock_name or symbol} 是 TAIFEX 股票期貨標的")
         show=fm.rename(columns={"product_code":"期貨代碼","name":"標的名稱","contract_unit":"契約單位"})[["期貨代碼","標的名稱","契約單位"]]
         st.dataframe(show,use_container_width=True,hide_index=True)
-        if str(symbol).zfill(4)=="2368":
-            st.caption("金像電：RK 為股票期貨（2,000股）；VG 為小型金像電期貨（100股）。")
+        # 所有股票期貨標的都使用同一套分析，不針對單一股票硬編碼。
+        contracts=[]
+        for _,r in fm.iterrows():
+            unit=str(r.get("contract_unit","")).strip()
+            contracts.append(f"{r.get('product_code','—')}（{unit+'股/口' if unit else '契約單位依 TAIFEX'}）")
+        if contracts:
+            st.caption("本股可用期貨："+"、".join(contracts))
         sd,su,se=taifex_institutional()
         if not sd.empty:
             sprod=next((c for c in sd.columns if "商品" in str(c)),None)
