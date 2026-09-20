@@ -545,7 +545,7 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("🔥 最近外資買超股票")
     st.caption("先看全市場最近一個交易日外資買進哪些上市股票，再往下看目前輸入股票的六大外資分點。買超代表資金流向，不等同外資一定會拉抬股價。")
-    fr,fr_url,fr_err=twse_foreign_buy_rank()
+    fr,fr_url,fr_err=twse_foreign_buy_rank()\n    ferr=fr_err  # 與外資分點排行共用診斷訊息
     if not fr.empty:
         topn=st.slider("顯示外資買超前幾名",5,30,15,5,key="foreign_rank_n")
         show=fr.head(topn).copy()
