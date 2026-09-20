@@ -623,9 +623,9 @@ with tabs[3]:
         st.dataframe(rg.head(top_branch)[cols],use_container_width=True,hide_index=True,
             column_config={
                 "六大分點買進張數":st.column_config.NumberColumn("六大分點買進張數",format="%d"),
-                "六大分點賣出張數":st.column_config.NumberColumn("六大分點賣出張數",format="%d 張"),
-                "六大分點淨買賣":st.column_config.NumberColumn("六大分點淨買賣",format="%d 張"),
-                "外資買超張數":st.column_config.NumberColumn("官方外資買超張數",format="%d 張"),
+                "六大分點賣出張數":st.column_config.NumberColumn("六大分點賣出張數",format="%d"),
+                "六大分點淨買賣":st.column_config.NumberColumn("六大分點淨買賣",format="%d"),
+                "外資買超張數":st.column_config.NumberColumn("官方外資買超張數",format="%d"),
             })
         st.caption(f"分點期間使用資料庫最近 {len(chosen)} 個日期；歷史不足所選期間時只使用現有資料。TWSE官方欄位為最新交易日，分點欄位為所選期間累計。")
     else:
