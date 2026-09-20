@@ -251,33 +251,45 @@ def option_value_split(spot,strike,premium,cp):
 
 @st.cache_data(ttl=900)
 def twse_foreign_buy_rank():
-    """TWSE 最新上市個股外資買賣超；回傳所有四位數普通股，不只買超股。"""
+    """TWSE T86：最新上市個股三大法人；外資欄位採實際 T86 常見欄名並保留診斷。"""
     url="https://openapi.twse.com.tw/v1/fund/T86"
     try:
         r=requests.get(url,headers=HEADERS,timeout=20); r.raise_for_status()
-        d=pd.DataFrame(r.json())
+        raw=r.json()
+        d=pd.DataFrame(raw)
         if d.empty: return pd.DataFrame(),url,"TWSE 回傳空資料"
-        code=next((c for c in d.columns if "證券代號" in str(c)),None)
-        name=next((c for c in d.columns if "證券名稱" in str(c)),None)
-        # TWSE 欄名可能有「外陸資」或「外資及陸資」，用關鍵字而非完整固定字串。
-        def pick(kind):
-            cand=[c for c in d.columns if ("外陸資" in str(c) or "外資及陸資" in str(c)) and kind in str(c) and "自營商" not in str(c)]
-            if not cand:
-                cand=[c for c in d.columns if ("外陸資" in str(c) or "外資及陸資" in str(c)) and kind in str(c)]
-            return cand[0] if cand else None
-        buy=pick("買進股數"); sell=pick("賣出股數"); net=pick("買賣超股數")
+        def norm(x): return re.sub(r"[\s_（）()]", "", str(x))
+        cmap={norm(c):c for c in d.columns}
+        def exact(keys):
+            for k in keys:
+                nk=norm(k)
+                if nk in cmap: return cmap[nk]
+            return None
+        code=exact(["證券代號","Code"])
+        name=exact(["證券名稱","Name"])
+        buy=exact(["外陸資買進股數(不含外資自營商)","外陸資買進股數不含外資自營商","外資及陸資買進股數","外資買進股數"])
+        sell=exact(["外陸資賣出股數(不含外資自營商)","外陸資賣出股數不含外資自營商","外資及陸資賣出股數","外資賣出股數"])
+        net=exact(["外陸資買賣超股數(不含外資自營商)","外陸資買賣超股數不含外資自營商","外資及陸資買賣超股數","外資買賣超股數"])
+        # 若官方欄名再次調整，退回語意搜尋，但不排除含「不含外資自營商」的正確欄位。
+        def semantic(kind):
+            for c in d.columns:
+                z=norm(c)
+                if ("外陸資" in z or "外資及陸資" in z or z.startswith("外資")) and kind in z and "自營商買賣" not in z:
+                    return c
+            return None
+        buy=buy or semantic("買進股數"); sell=sell or semantic("賣出股數"); net=net or semantic("買賣超股數")
         if not code or not name or not net:
-            return pd.DataFrame(),url,"找不到 TWSE 外資欄位："+",".join(map(str,d.columns))
+            return pd.DataFrame(),url,"TWSE欄位未辨識｜實際欄位："+ "｜".join(map(str,d.columns))
         out=pd.DataFrame({"代號":d[code].astype(str).str.strip(),"名稱":d[name].astype(str).str.strip()})
-        for label,col in [("外資買進股數",buy),("外資賣出股數",sell),("外資買賣超股數",net)]:
-            out[label]=pd.to_numeric(d[col].astype(str).str.replace(",","",regex=False),errors="coerce") if col else np.nan
+        def num(col):
+            return pd.to_numeric(d[col].astype(str).str.replace(",","",regex=False).str.replace("+","",regex=False),errors="coerce") if col else pd.Series(np.nan,index=d.index)
+        out["外資買進張數"]=num(buy)/1000
+        out["外資賣出張數"]=num(sell)/1000
+        out["外資買超張數"]=num(net)/1000
         out=out[out["代號"].str.fullmatch(r"\d{4}",na=False)].copy()
-        out["外資買進張數"]=out["外資買進股數"]/1000
-        out["外資賣出張數"]=out["外資賣出股數"]/1000
-        out["外資買超張數"]=out["外資買賣超股數"]/1000
         return out.sort_values("外資買超張數",ascending=False),url,None
     except Exception as e:
-        return pd.DataFrame(),url,str(e)
+        return pd.DataFrame(),url,"TWSE T86錯誤："+repr(e)
 
 @st.cache_data(ttl=3600)
 def taifex_stock_futures_map():
@@ -608,6 +620,8 @@ with tabs[3]:
         theme_map={"2330":"AI／先進製程／半導體","2317":"AI伺服器／電子代工","2454":"IC設計／AI邊緣運算","2382":"AI伺服器／電子代工","3231":"AI伺服器／電子代工","2308":"電源／AI伺服器","3017":"散熱／AI伺服器","2368":"PCB／AI伺服器","3189":"PCB／AI伺服器","2327":"被動元件／AI伺服器","2344":"記憶體","2408":"記憶體","6770":"記憶體／IC設計","3711":"封測／半導體","3037":"PCB／載板","6669":"散熱／伺服器","2376":"AI伺服器／板卡","2377":"AI伺服器／主機板","2357":"AI PC／伺服器","3661":"高速傳輸IC／半導體"}
         rg["題材"]=rg["symbol"].map(theme_map).fillna("—")
         official=fr[["代號","名稱","外資買進張數","外資賣出張數","外資買超張數"]].copy() if not fr.empty else pd.DataFrame()
+        if fr.empty and ferr:
+            st.warning("TWSE官方外資資料未載入："+str(ferr))
         if not official.empty:
             official["代號"]=official["代號"].astype(str).str.zfill(4)
             rg=rg.merge(official,left_on="symbol",right_on="代號",how="left")
