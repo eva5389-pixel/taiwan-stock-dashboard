@@ -251,38 +251,26 @@ def option_value_split(spot,strike,premium,cp):
 
 @st.cache_data(ttl=900)
 def twse_foreign_buy_rank():
-    """TWSE T86：最新上市個股三大法人；外資欄位採實際 T86 常見欄名並保留診斷。"""
-    url="https://openapi.twse.com.tw/v1/fund/T86"
+    """TWSE 三大法人 T86（rwd 報表 API）：上市個股外陸資買進／賣出／淨買賣。"""
+    url="https://www.twse.com.tw/rwd/zh/fund/T86?selectType=ALL&response=json"
     try:
         r=requests.get(url,headers=HEADERS,timeout=20); r.raise_for_status()
-        raw=r.json()
-        d=pd.DataFrame(raw)
-        if d.empty: return pd.DataFrame(),url,"TWSE 回傳空資料"
-        def norm(x): return re.sub(r"[\s_（）()]", "", str(x))
-        cmap={norm(c):c for c in d.columns}
-        def exact(keys):
-            for k in keys:
-                nk=norm(k)
-                if nk in cmap: return cmap[nk]
-            return None
-        code=exact(["證券代號","Code"])
-        name=exact(["證券名稱","Name"])
-        buy=exact(["外陸資買進股數(不含外資自營商)","外陸資買進股數不含外資自營商","外資及陸資買進股數","外資買進股數"])
-        sell=exact(["外陸資賣出股數(不含外資自營商)","外陸資賣出股數不含外資自營商","外資及陸資賣出股數","外資賣出股數"])
-        net=exact(["外陸資買賣超股數(不含外資自營商)","外陸資買賣超股數不含外資自營商","外資及陸資買賣超股數","外資買賣超股數"])
-        # 若官方欄名再次調整，退回語意搜尋，但不排除含「不含外資自營商」的正確欄位。
-        def semantic(kind):
-            for c in d.columns:
-                z=norm(c)
-                if ("外陸資" in z or "外資及陸資" in z or z.startswith("外資")) and kind in z and "自營商買賣" not in z:
-                    return c
-            return None
-        buy=buy or semantic("買進股數"); sell=sell or semantic("賣出股數"); net=net or semantic("買賣超股數")
-        if not code or not name or not net:
-            return pd.DataFrame(),url,"TWSE欄位未辨識｜實際欄位："+ "｜".join(map(str,d.columns))
+        j=r.json()
+        fields=j.get("fields",[])
+        data=j.get("data",[])
+        if not fields or not data:
+            return pd.DataFrame(),url,"TWSE T86 回傳無 fields/data："+str(j.get("stat",""))
+        d=pd.DataFrame(data,columns=fields)
+        code="證券代號"; name="證券名稱"
+        buy="外陸資買進股數(不含外資自營商)"
+        sell="外陸資賣出股數(不含外資自營商)"
+        net="外陸資買賣超股數(不含外資自營商)"
+        missing=[c for c in [code,name,buy,sell,net] if c not in d.columns]
+        if missing:
+            return pd.DataFrame(),url,"TWSE T86 缺欄位："+",".join(missing)+"｜實際欄位："+"｜".join(map(str,d.columns))
         out=pd.DataFrame({"代號":d[code].astype(str).str.strip(),"名稱":d[name].astype(str).str.strip()})
-        def num(col):
-            return pd.to_numeric(d[col].astype(str).str.replace(",","",regex=False).str.replace("+","",regex=False),errors="coerce") if col else pd.Series(np.nan,index=d.index)
+        def num(c):
+            return pd.to_numeric(d[c].astype(str).str.replace(",","",regex=False).str.replace("+","",regex=False),errors="coerce")
         out["外資買進張數"]=num(buy)/1000
         out["外資賣出張數"]=num(sell)/1000
         out["外資買超張數"]=num(net)/1000
@@ -625,7 +613,8 @@ with tabs[3]:
             st.warning("TWSE官方外資資料未載入："+str(ferr))
         if not official.empty:
             official["代號"]=official["代號"].astype(str).str.zfill(4)
-            rg=rg.merge(official,left_on="symbol",right_on="代號",how="left")
+            rg["代號"]=rg["symbol"]
+            rg=rg.merge(official,on="代號",how="left")
         else:
             rg["代號"]=rg["symbol"]; rg["名稱"]=""; rg["外資買進張數"]=np.nan; rg["外資賣出張數"]=np.nan; rg["外資買超張數"]=np.nan
         # 排行未進 TWSE 當日榜時，仍以固定追蹤清單補齊股票名稱。
