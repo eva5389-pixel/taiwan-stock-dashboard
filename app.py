@@ -639,12 +639,12 @@ with tabs[3]:
         rg["籌碼訊號"]=rg.apply(sync_label,axis=1)
         rg=rg.rename(columns={"symbol":"代號","buy_lots":"六大分點買進張數","sell_lots":"六大分點賣出張數","net_lots":"六大分點淨買賣"})
         top_branch=st.slider("顯示分點排行前幾名",5,30,15,5,key="branch_rank_n")
-        cols=["代號","名稱","題材","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","分點30日估算成本","分點成本實際日數","外資買進張數","外資賣出張數","外資買超張數","籌碼訊號"]
+        cols=["代號","名稱","題材","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","分點30日估算成本","外資買進張數","外資賣出張數","外資買超張數","籌碼訊號"]
         display_rg=rg.head(top_branch)[cols].copy()
         # 全部轉成顯示字串，徹底避開 Streamlit Cloud / PyArrow 對 nullable dtype 的轉換差異。
         for c in ["代號","名稱","題材","籌碼訊號"]:
             display_rg[c]=display_rg[c].fillna("—").astype(str)
-        for c in ["六大分點買進張數","六大分點賣出張數","六大分點淨買賣","分點成本實際日數","外資買進張數","外資賣出張數","外資買超張數"]:
+        for c in ["六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買進張數","外資賣出張數","外資買超張數"]:
             nums=pd.to_numeric(display_rg[c],errors="coerce")
             display_rg[c]=nums.map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—").astype(str)
         costnums=pd.to_numeric(display_rg["分點30日估算成本"],errors="coerce")
