@@ -374,7 +374,7 @@ try:
 except Exception:
     pass
 
-tabs=st.tabs(["🏠 總覽","🏦 分點成本","🌍 外資追蹤","📈 個股期貨","📊 大盤期貨","🇺🇸 Pelosi","📢 重大訊息"])
+tabs=st.tabs(["🏠 總覽","🏦 分點成本","🌍 外資追蹤","🏆 外資分點排行","📈 個股期貨","📊 大盤期貨","🇺🇸 Pelosi","📢 重大訊息"])
 with tabs[0]:
     st.subheader(f"{symbol} 自動更新總覽")
     if not h.empty:
@@ -540,49 +540,6 @@ with tabs[2]:
         st.warning("TWSE 外資買超排行暫時無法取得："+str(fr_err))
 
     st.divider()
-    st.subheader("🏦 六大外資分點買賣排行榜")
-    st.caption("用已累積的券商分點明細，把六大外資分點在各股票的買進／賣出／淨買賣加總排行；分點流向不等同 TWSE 投資人身分分類。")
-    try:
-        rr=requests.get("https://raw.githubusercontent.com/eva5389-pixel/taiwan-stock-dashboard/main/data/foreign_broker_history.csv",headers=HEADERS,timeout=15)
-        rr.raise_for_status()
-        from io import StringIO
-        ah=pd.read_csv(StringIO(rr.text))
-        ah["date"]=pd.to_datetime(ah["date"],errors="coerce")
-        for c in ["buy_lots","sell_lots","net_lots"]: ah[c]=pd.to_numeric(ah[c],errors="coerce")
-        ah=ah.dropna(subset=["date","symbol"])
-        branch_err=None
-    except Exception as e:
-        ah=pd.DataFrame(); branch_err=str(e)
-
-    if not ah.empty:
-        rank_days=st.segmented_control("分點排行期間",[1,5,20,60],default=5,format_func=lambda x:f"{x}日",key="branch_rank_days")
-        dates=sorted(ah["date"].dropna().dt.normalize().unique())
-        chosen=dates[-int(rank_days):] if dates else []
-        rh=ah[ah["date"].dt.normalize().isin(chosen)].copy()
-        rg=rh.groupby("symbol",as_index=False)[["buy_lots","sell_lots","net_lots"]].sum()
-        rg["symbol"]=rg["symbol"].astype(str).str.replace(".0","",regex=False).str.zfill(4)
-        rg=rg.sort_values("net_lots",ascending=False)
-        official=fr[["代號","名稱","外資買超張數"]].copy() if not fr.empty else pd.DataFrame()
-        if not official.empty:
-            official["代號"]=official["代號"].astype(str).str.zfill(4)
-            rg=rg.merge(official,left_on="symbol",right_on="代號",how="left")
-        else:
-            rg["名稱"]=""; rg["外資買超張數"]=np.nan
-        def sync_label(r):
-            a=r.get("外資買超張數",np.nan); b=r.get("net_lots",np.nan)
-            if pd.isna(a) or pd.isna(b): return "⚪ 資料不足"
-            if a>0 and b>0: return "🟢 法人／分點同步買超"
-            if a<0 and b<0: return "🔴 法人／分點同步賣超"
-            return "🟡 法人／分點分歧"
-        rg["籌碼訊號"]=rg.apply(sync_label,axis=1)
-        rg=rg.rename(columns={"symbol":"代號","buy_lots":"六大分點買進張數","sell_lots":"六大分點賣出張數","net_lots":"六大分點淨買賣"})
-        top_branch=st.slider("顯示分點排行前幾名",5,30,15,5,key="branch_rank_n")
-        cols=["代號","名稱","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買超張數","籌碼訊號"]
-        st.dataframe(rg.head(top_branch)[cols],use_container_width=True,hide_index=True)
-        st.caption(f"分點期間使用資料庫最近 {len(chosen)} 個日期；歷史不足所選期間時只使用現有資料。TWSE官方欄位為最新交易日，分點欄位為所選期間累計。")
-    else:
-        st.warning("六大外資分點排行資料暫時無法取得："+str(branch_err))
-    st.divider()
     st.subheader("目前股票：六大外資券商追蹤")
     st.caption("自動追蹤摩根士丹利、摩根大通、美林、高盛、瑞銀、花旗環球。")
     foreign_period=st.segmented_control("外資期間",[1,5],default=5,format_func=lambda x:f"{x}日",key="foreign_period")
@@ -620,6 +577,54 @@ with tabs[2]:
     st.link_button("查看資料原頁",fu)
 
 with tabs[3]:
+    st.subheader("🏦 六大外資分點買賣排行榜")
+    st.caption("用已累積的券商分點明細，把六大外資分點在各股票的買進／賣出／淨買賣加總排行；分點流向不等同 TWSE 投資人身分分類。")
+    try:
+        rr=requests.get("https://raw.githubusercontent.com/eva5389-pixel/taiwan-stock-dashboard/main/data/foreign_broker_history.csv",headers=HEADERS,timeout=15)
+        rr.raise_for_status()
+        from io import StringIO
+        ah=pd.read_csv(StringIO(rr.text))
+        ah["date"]=pd.to_datetime(ah["date"],errors="coerce")
+        for c in ["buy_lots","sell_lots","net_lots"]: ah[c]=pd.to_numeric(ah[c],errors="coerce")
+        ah=ah.dropna(subset=["date","symbol"])
+        branch_err=None
+    except Exception as e:
+        ah=pd.DataFrame(); branch_err=str(e)
+    
+    if not ah.empty:
+        rank_days=st.segmented_control("分點排行期間",[1,5,20,60],default=5,format_func=lambda x:f"{x}日",key="branch_rank_days")
+        dates=sorted(ah["date"].dropna().dt.normalize().unique())
+        chosen=dates[-int(rank_days):] if dates else []
+        rh=ah[ah["date"].dt.normalize().isin(chosen)].copy()
+        rg=rh.groupby("symbol",as_index=False)[["buy_lots","sell_lots","net_lots"]].sum()
+        rg["symbol"]=rg["symbol"].astype(str).str.replace(".0","",regex=False).str.zfill(4)
+        rg=rg.sort_values("net_lots",ascending=False)
+        theme_map={"2330":"AI／先進製程／半導體","2317":"AI伺服器／電子代工","2454":"IC設計／AI邊緣運算","2382":"AI伺服器／電子代工","3231":"AI伺服器／電子代工","2308":"電源／AI伺服器","3017":"散熱／AI伺服器","2368":"PCB／AI伺服器","3189":"PCB／AI伺服器","2327":"被動元件／AI伺服器","2344":"記憶體","2408":"記憶體","6770":"記憶體／IC設計","3711":"封測／半導體","3037":"PCB／載板","6669":"散熱／伺服器","2376":"AI伺服器／板卡","2377":"AI伺服器／主機板","2357":"AI PC／伺服器","3661":"高速傳輸IC／半導體"}
+        rg["題材"]=rg["symbol"].map(theme_map).fillna("—")
+        official=fr[["代號","名稱","外資買超張數"]].copy() if not fr.empty else pd.DataFrame()
+        if not official.empty:
+            official["代號"]=official["代號"].astype(str).str.zfill(4)
+            rg=rg.merge(official,left_on="symbol",right_on="代號",how="left")
+        else:
+            rg["名稱"]=""; rg["外資買超張數"]=np.nan
+        def sync_label(r):
+            a=r.get("外資買超張數",np.nan); b=r.get("net_lots",np.nan)
+            if pd.isna(a) or pd.isna(b): return "⚪ 資料不足"
+            if a>0 and b>0: return "🟢 法人／分點同步買超"
+            if a<0 and b<0: return "🔴 法人／分點同步賣超"
+            return "🟡 法人／分點分歧"
+        rg["籌碼訊號"]=rg.apply(sync_label,axis=1)
+        rg=rg.rename(columns={"symbol":"代號","buy_lots":"六大分點買進張數","sell_lots":"六大分點賣出張數","net_lots":"六大分點淨買賣"})
+        top_branch=st.slider("顯示分點排行前幾名",5,30,15,5,key="branch_rank_n")
+        cols=["代號","名稱","題材","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買超張數","籌碼訊號"]
+        st.dataframe(rg.head(top_branch)[cols],use_container_width=True,hide_index=True)
+        st.caption(f"分點期間使用資料庫最近 {len(chosen)} 個日期；歷史不足所選期間時只使用現有資料。TWSE官方欄位為最新交易日，分點欄位為所選期間累計。")
+    else:
+        st.warning("六大外資分點排行資料暫時無法取得："+str(branch_err))
+    st.divider()
+    
+
+with tabs[4]:
     st.subheader("📈 個股期貨")
     st.caption("先依 TAIFEX 官方「股票期貨/股票選擇權交易標的」確認標的資格，不再用三大法人資料反推是否有個股期貨。")
     fmap,fmap_url,fmap_err=taifex_stock_futures_map()
@@ -661,7 +666,7 @@ with tabs[3]:
     st.link_button("TAIFEX 股票期貨官方標的表",fmap_url)
 
 
-with tabs[4]:
+with tabs[5]:
     st.subheader("📊 大盤期貨")
     st.caption("TAIFEX 三大法人資料只能觀察法人合計部位，無法直接辨識每一口是避險或方向交易；下方採『現貨－期貨對照』做研究性推估。")
     td,tu,te=taifex_institutional()
