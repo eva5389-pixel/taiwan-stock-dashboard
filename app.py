@@ -620,13 +620,14 @@ with tabs[3]:
         rg=rg.rename(columns={"symbol":"代號","buy_lots":"六大分點買進張數","sell_lots":"六大分點賣出張數","net_lots":"六大分點淨買賣"})
         top_branch=st.slider("顯示分點排行前幾名",5,30,15,5,key="branch_rank_n")
         cols=["代號","名稱","題材","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買超張數","籌碼訊號"]
-        st.dataframe(rg.head(top_branch)[cols],use_container_width=True,hide_index=True,
-            column_config={
-                "六大分點買進張數":st.column_config.NumberColumn("六大分點買進張數",format="%d"),
-                "六大分點賣出張數":st.column_config.NumberColumn("六大分點賣出張數",format="%d"),
-                "六大分點淨買賣":st.column_config.NumberColumn("六大分點淨買賣",format="%d"),
-                "外資買超張數":st.column_config.NumberColumn("官方外資買超張數",format="%d"),
-            })
+        display_rg=rg.head(top_branch)[cols].copy()
+        # Arrow/Streamlit 對混合 dtype 較嚴格：顯示前統一轉型，避免 None/字串混入數字欄造成 ValueError。
+        display_rg["代號"]=display_rg["代號"].astype(str)
+        for c in ["名稱","題材","籌碼訊號"]:
+            display_rg[c]=display_rg[c].fillna("—").astype(str)
+        for c in ["六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買超張數"]:
+            display_rg[c]=pd.to_numeric(display_rg[c],errors="coerce").astype("Float64")
+        st.dataframe(display_rg,use_container_width=True,hide_index=True)
         st.caption(f"分點期間使用資料庫最近 {len(chosen)} 個日期；歷史不足所選期間時只使用現有資料。TWSE官方欄位為最新交易日，分點欄位為所選期間累計。")
     else:
         st.warning("六大外資分點排行資料暫時無法取得："+str(branch_err))
