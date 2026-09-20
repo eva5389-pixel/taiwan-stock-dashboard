@@ -284,7 +284,7 @@ def taifex_stock_futures_map():
             if t.empty: continue
             for _,r in t.iterrows():
                 vals=[str(x).strip() for x in r.tolist()]
-                code=next((x for x in vals if re.fullmatch(r"\\d{4,6}",x)),None)
+                code=next((x for x in vals if re.fullmatch(r"\d{4,6}",x)),None)
                 prod=next((x for x in vals if re.fullmatch(r"[A-Z]{2}",x)),None)
                 if code and prod:
                     name=""
@@ -292,7 +292,7 @@ def taifex_stock_futures_map():
                         idx=vals.index(code)
                         if idx+1<len(vals): name=vals[idx+1]
                     except Exception: pass
-                    unit=next((x.replace(",","") for x in vals if re.fullmatch(r"[\\d,]+",x) and x!=code and int(x.replace(",","")) in [100,2000,4000,8000,10000]),"")
+                    unit=next((x.replace(",","") for x in vals if re.fullmatch(r"[\d,]+",x) and x!=code and int(x.replace(",","")) in [100,2000,4000,8000,10000]),"")
                     rows.append({"symbol":code,"product_code":prod,"name":name,"contract_unit":unit})
         d=pd.DataFrame(rows).drop_duplicates(["symbol","product_code"]) if rows else pd.DataFrame()
         return d,url,None
