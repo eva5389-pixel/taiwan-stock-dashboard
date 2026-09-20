@@ -540,6 +540,49 @@ with tabs[2]:
         st.warning("TWSE 外資買超排行暫時無法取得："+str(fr_err))
 
     st.divider()
+    st.subheader("🏦 六大外資分點買賣排行榜")
+    st.caption("用已累積的券商分點明細，把六大外資分點在各股票的買進／賣出／淨買賣加總排行；分點流向不等同 TWSE 投資人身分分類。")
+    try:
+        rr=requests.get("https://raw.githubusercontent.com/eva5389-pixel/taiwan-stock-dashboard/main/data/foreign_broker_history.csv",headers=HEADERS,timeout=15)
+        rr.raise_for_status()
+        from io import StringIO
+        ah=pd.read_csv(StringIO(rr.text))
+        ah["date"]=pd.to_datetime(ah["date"],errors="coerce")
+        for c in ["buy_lots","sell_lots","net_lots"]: ah[c]=pd.to_numeric(ah[c],errors="coerce")
+        ah=ah.dropna(subset=["date","symbol"])
+        branch_err=None
+    except Exception as e:
+        ah=pd.DataFrame(); branch_err=str(e)
+
+    if not ah.empty:
+        rank_days=st.segmented_control("分點排行期間",[1,5,20,60],default=5,format_func=lambda x:f"{x}日",key="branch_rank_days")
+        dates=sorted(ah["date"].dropna().dt.normalize().unique())
+        chosen=dates[-int(rank_days):] if dates else []
+        rh=ah[ah["date"].dt.normalize().isin(chosen)].copy()
+        rg=rh.groupby("symbol",as_index=False)[["buy_lots","sell_lots","net_lots"]].sum()
+        rg["symbol"]=rg["symbol"].astype(str).str.replace(".0","",regex=False).str.zfill(4)
+        rg=rg.sort_values("net_lots",ascending=False)
+        official=fr[["代號","名稱","外資買超張數"]].copy() if not fr.empty else pd.DataFrame()
+        if not official.empty:
+            official["代號"]=official["代號"].astype(str).str.zfill(4)
+            rg=rg.merge(official,left_on="symbol",right_on="代號",how="left")
+        else:
+            rg["名稱"]=""; rg["外資買超張數"]=np.nan
+        def sync_label(r):
+            a=r.get("外資買超張數",np.nan); b=r.get("net_lots",np.nan)
+            if pd.isna(a) or pd.isna(b): return "⚪ 資料不足"
+            if a>0 and b>0: return "🟢 法人／分點同步買超"
+            if a<0 and b<0: return "🔴 法人／分點同步賣超"
+            return "🟡 法人／分點分歧"
+        rg["籌碼訊號"]=rg.apply(sync_label,axis=1)
+        rg=rg.rename(columns={"symbol":"代號","buy_lots":"六大分點買進張數","sell_lots":"六大分點賣出張數","net_lots":"六大分點淨買賣"})
+        top_branch=st.slider("顯示分點排行前幾名",5,30,15,5,key="branch_rank_n")
+        cols=["代號","名稱","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買超張數","籌碼訊號"]
+        st.dataframe(rg.head(top_branch)[cols],use_container_width=True,hide_index=True)
+        st.caption(f"分點期間使用資料庫最近 {len(chosen)} 個日期；歷史不足所選期間時只使用現有資料。TWSE官方欄位為最新交易日，分點欄位為所選期間累計。")
+    else:
+        st.warning("六大外資分點排行資料暫時無法取得："+str(branch_err))
+    st.divider()
     st.subheader("目前股票：六大外資券商追蹤")
     st.caption("自動追蹤摩根士丹利、摩根大通、美林、高盛、瑞銀、花旗環球。")
     foreign_period=st.segmented_control("外資期間",[1,5],default=5,format_func=lambda x:f"{x}日",key="foreign_period")
