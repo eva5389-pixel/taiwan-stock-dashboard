@@ -605,6 +605,14 @@ with tabs[3]:
         rh=ah[ah["date"].dt.normalize().isin(chosen)].copy()
         rg=rh.groupby("symbol",as_index=False)[["buy_lots","sell_lots","net_lots"]].sum()
         rg["symbol"]=rg["symbol"].astype(str).str.replace(".0","",regex=False).str.zfill(4)
+        cost_rows=[]
+        for sym in rg["symbol"].tolist():
+            sh=ah[ah["symbol"].astype(str).str.replace(".0","",regex=False).str.zfill(4)==sym].copy()
+            try: yh,_=yahoo_history(sym)
+            except Exception: yh=pd.DataFrame()
+            cost30,used30=flow_weighted_cost(sh,yh,30) if not sh.empty and not yh.empty else (np.nan,0)
+            cost_rows.append({"symbol":sym,"分點30日估算成本":cost30,"分點成本實際日數":used30})
+        rg=rg.merge(pd.DataFrame(cost_rows),on="symbol",how="left")
         rg=rg.sort_values("net_lots",ascending=False)
         theme_map={"2330":"AI／先進製程／半導體","2317":"AI伺服器／電子代工","2454":"IC設計／AI邊緣運算","2382":"AI伺服器／電子代工","3231":"AI伺服器／電子代工","2308":"電源／AI伺服器","3017":"散熱／AI伺服器","2368":"PCB／AI伺服器","3189":"PCB／AI伺服器","2327":"被動元件／AI伺服器","2344":"記憶體","2408":"記憶體","6770":"記憶體／IC設計","3711":"封測／半導體","3037":"PCB／載板","6669":"散熱／伺服器","2376":"AI伺服器／板卡","2377":"AI伺服器／主機板","2357":"AI PC／伺服器","3661":"高速傳輸IC／半導體"}
         rg["題材"]=rg["symbol"].map(theme_map).fillna("—")
@@ -629,17 +637,21 @@ with tabs[3]:
         rg["籌碼訊號"]=rg.apply(sync_label,axis=1)
         rg=rg.rename(columns={"symbol":"代號","buy_lots":"六大分點買進張數","sell_lots":"六大分點賣出張數","net_lots":"六大分點淨買賣"})
         top_branch=st.slider("顯示分點排行前幾名",5,30,15,5,key="branch_rank_n")
-        cols=["代號","名稱","題材","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買進張數","外資賣出張數","外資買超張數","籌碼訊號"]
+        cols=["代號","名稱","題材","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","分點30日估算成本","分點成本實際日數","外資買進張數","外資賣出張數","外資買超張數","籌碼訊號"]
         display_rg=rg.head(top_branch)[cols].copy()
         # 全部轉成顯示字串，徹底避開 Streamlit Cloud / PyArrow 對 nullable dtype 的轉換差異。
         for c in ["代號","名稱","題材","籌碼訊號"]:
             display_rg[c]=display_rg[c].fillna("—").astype(str)
-        for c in ["六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買進張數","外資賣出張數","外資買超張數"]:
+        for c in ["六大分點買進張數","六大分點賣出張數","六大分點淨買賣","分點成本實際日數","外資買進張數","外資賣出張數","外資買超張數"]:
             nums=pd.to_numeric(display_rg[c],errors="coerce")
             display_rg[c]=nums.map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—").astype(str)
+        costnums=pd.to_numeric(display_rg["分點30日估算成本"],errors="coerce")
+        display_rg["分點30日估算成本"]=costnums.map(lambda x: f"{x:,.2f}" if pd.notna(x) else "—").astype(str)
         # 用 HTML table 顯示，避開 Streamlit dataframe -> PyArrow 的序列化路徑。
         st.markdown(display_rg.to_html(index=False,escape=True),unsafe_allow_html=True)
-        st.caption(f"分點期間使用資料庫最近 {len(chosen)} 個日期；歷史不足所選期間時只使用現有資料。TWSE官方欄位為最新交易日，分點欄位為所選期間累計。")
+        branch_start=pd.to_datetime(min(chosen)).strftime("%Y-%m-%d") if len(chosen) else "—"
+        branch_end=pd.to_datetime(max(chosen)).strftime("%Y-%m-%d") if len(chosen) else "—"
+        st.caption(f"分點統計期間：{branch_start} ～ {branch_end}（實際 {len(chosen)} 個資料日；選擇 {rank_days} 日）。外資買進／賣出／買超張數期間：最新交易日（TWSE T86 單日）。30日成本欄另顯示實際可配對交易日數；不足30日時不是完整30日成本。")
     else:
         st.warning("六大外資分點排行資料暫時無法取得："+str(branch_err))
     st.divider()
