@@ -606,7 +606,10 @@ with tabs[3]:
             official["代號"]=official["代號"].astype(str).str.zfill(4)
             rg=rg.merge(official,left_on="symbol",right_on="代號",how="left")
         else:
-            rg["名稱"]=""; rg["外資買超張數"]=np.nan
+            rg["代號"]=rg["symbol"]; rg["名稱"]=""; rg["外資買超張數"]=np.nan
+        # 排行未進 TWSE 當日榜時，仍以固定追蹤清單補齊股票名稱。
+        name_map={"2330":"台積電","2317":"鴻海","2454":"聯發科","2382":"廣達","3231":"緯創","2308":"台達電","3017":"奇鋐","2368":"金像電","3189":"景碩","2327":"國巨","2344":"華邦電","2408":"南亞科","6770":"力積電","3711":"日月光投控","3037":"欣興","6669":"緯穎","2376":"技嘉","2377":"微星","2357":"華碩","3661":"世芯-KY"}
+        rg["名稱"]=rg["名稱"].replace("",np.nan).fillna(rg["symbol"].map(name_map)).fillna("—")
         def sync_label(r):
             a=r.get("外資買超張數",np.nan); b=r.get("net_lots",np.nan)
             if pd.isna(a) or pd.isna(b): return "⚪ 資料不足"
@@ -617,7 +620,13 @@ with tabs[3]:
         rg=rg.rename(columns={"symbol":"代號","buy_lots":"六大分點買進張數","sell_lots":"六大分點賣出張數","net_lots":"六大分點淨買賣"})
         top_branch=st.slider("顯示分點排行前幾名",5,30,15,5,key="branch_rank_n")
         cols=["代號","名稱","題材","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買超張數","籌碼訊號"]
-        st.dataframe(rg.head(top_branch)[cols],use_container_width=True,hide_index=True)
+        st.dataframe(rg.head(top_branch)[cols],use_container_width=True,hide_index=True,
+            column_config={
+                "六大分點買進張數":st.column_config.NumberColumn("六大分點買進張數",format="%d 張"),
+                "六大分點賣出張數":st.column_config.NumberColumn("六大分點賣出張數",format="%d 張"),
+                "六大分點淨買賣":st.column_config.NumberColumn("六大分點淨買賣",format="%d 張"),
+                "外資買超張數":st.column_config.NumberColumn("官方外資買超張數",format="%d 張"),
+            })
         st.caption(f"分點期間使用資料庫最近 {len(chosen)} 個日期；歷史不足所選期間時只使用現有資料。TWSE官方欄位為最新交易日，分點欄位為所選期間累計。")
     else:
         st.warning("六大外資分點排行資料暫時無法取得："+str(branch_err))
