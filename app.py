@@ -380,7 +380,7 @@ try:
 except Exception:
     pass
 
-tabs=st.tabs(["🏠 總覽","🏦 分點成本","🌍 外資追蹤","🏆 外資分點排行","📈 個股期貨","📊 大盤期貨","🇺🇸 Pelosi","📢 重大訊息"])
+tabs=st.tabs(["🏠 總覽","🏦 分點成本","🌍 外資追蹤","🏆 外資分點排行","📈 個股期貨","📊 大盤期貨","📢 重大訊息"])
 with tabs[0]:
     st.subheader(f"{symbol} 自動更新總覽")
     if not h.empty:
@@ -885,23 +885,6 @@ with tabs[5]:
     else:
         st.info("臺指選擇權公開行情暫時無法取得："+str(oe))
     st.link_button("TAIFEX OpenAPI",tu)
-
-with tabs[4]:
-    st.subheader("Nancy Pelosi 公開交易")
-    pdx,pu,pe=pelosi_public()
-    if not pdx.empty:
-        st.dataframe(pdx,use_container_width=True,hide_index=True)
-        st.caption("直接顯示公開追蹤頁可讀取的交易表格；申報金額通常是區間，不把區間中點當成精確成交成本。")
-        # 若頁面存在可辨識 ticker 欄，顯示交易筆數圖
-        tc=next((c for c in pdx.columns if any(k in str(c).lower() for k in ["ticker","股票","代號"])),None)
-        if tc:
-            cnt=pdx[tc].astype(str).value_counts().head(15)
-            st.markdown("#### 公開交易筆數")
-            st.bar_chart(cnt,horizontal=True)
-    else:
-        st.warning("Pelosi 追蹤頁目前無法由 Streamlit 伺服器直接取得表格："+str(pe))
-        st.caption("這一頁不會捏造交易資料；等可讀的公開揭露來源接通後才會畫圖。")
-    st.link_button("Pelosi Stock Tracker",pu)
 
 with tabs[5]:
     st.subheader("台股重大訊息")
