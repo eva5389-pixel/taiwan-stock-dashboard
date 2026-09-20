@@ -598,23 +598,23 @@ with tabs[2]:
         if len(valid):
             st.metric(f"六大外資分點合計淨買賣（近{foreign_period}日累計）",f"{valid.sum():,.0f} 張")
 
-        # 前一營業日六大外資分點
+        # 最近5個交易日六大外資分點淨買賣變化
         ph,_,_=foreign_history(symbol)
         if not ph.empty:
-            trade_dates=sorted(ph["date"].dropna().dt.normalize().unique())
+            ph["date"]=pd.to_datetime(ph["date"],errors="coerce")
             market_dates=set(pd.to_datetime(h.index,errors="coerce").normalize()) if not h.empty else set()
-            valid_dates=[d for d in trade_dates if pd.Timestamp(d) in market_dates]
-            prev_date=valid_dates[-1] if valid_dates else (trade_dates[-1] if trade_dates else None)
-            if prev_date is not None:
-                pdaily=ph[ph["date"].dt.normalize()==pd.Timestamp(prev_date)].copy()
-                pdaily=pdaily.groupby("broker",as_index=False)[["buy_lots","sell_lots","net_lots"]].sum()
-                pdaily=pdaily.rename(columns={"broker":"主要券商","buy_lots":"買進張數","sell_lots":"賣出張數","net_lots":"淨買超"})
-                st.markdown(f"#### 📅 前一營業日六大外資分點（{pd.Timestamp(prev_date).date()}）")
-                st.dataframe(pdaily[["主要券商","買進張數","賣出張數","淨買超"]],use_container_width=True,hide_index=True)
-                st.metric("前一營業日六大外資分點合計淨買賣",f"{pdaily['淨買超'].sum():,.0f} 張")
-                pchart=pdaily.set_index("主要券商")["淨買超"]
-                if not pchart.empty:
-                    st.bar_chart(pchart,horizontal=True)
+            ph["_d"]=ph["date"].dt.normalize()
+            if market_dates:
+                ph=ph[ph["_d"].isin(market_dates)].copy()
+            daily5=(ph.groupby("_d",as_index=False)["net_lots"].sum()
+                      .sort_values("_d").tail(5))
+            if not daily5.empty:
+                daily5["日期"]=pd.to_datetime(daily5["_d"]).dt.strftime("%m/%d")
+                daily5["六大外資分點淨買賣"]=pd.to_numeric(daily5["net_lots"],errors="coerce")
+                st.markdown("#### 📊 外資買賣超近5日變化")
+                st.caption("顯示六大外資券商分點每日合計淨買賣；正值為淨買超、負值為淨賣超。")
+                st.bar_chart(daily5.set_index("日期")["六大外資分點淨買賣"],use_container_width=True)
+                st.dataframe(daily5[["日期","六大外資分點淨買賣"]],use_container_width=True,hide_index=True)
     else:
         st.warning("外資分點資料讀取失敗："+str(fe))
     st.link_button("查看資料原頁",fu)
