@@ -461,6 +461,47 @@ with tabs[0]:
             st.caption("1／5 日已有公開分點資料；20／30／60 日需等歷史回補資料寫入後才會產生六大外資專屬成本。")
         st.caption("估算公式：Σ（每日六大外資買進張數 × 當日估算成交價）÷ Σ每日六大外資買進張數。")
 
+        # 依成本、量價與外資流向產生「條件式」交易觀察，不把分點成本視為精確持倉成本。
+        st.markdown("### 🧭 外資成本交易策略觀察")
+        valid_fc=fc.dropna(subset=["六大外資估算成本"]).copy()
+        if not valid_fc.empty:
+            pref=valid_fc[valid_fc["期間"].isin(["20日","60日"])]
+            base=pref.iloc[-1] if not pref.empty else valid_fc.iloc[-1]
+            cost=float(base["六大外資估算成本"])
+            period=str(base["期間"])
+            net=float(base["六大外資淨買賣"]) if pd.notna(base["六大外資淨買賣"]) else 0.0
+            dist=(current/cost-1)*100 if cost else np.nan
+            vol=float(h["Volume"].iloc[-1]) if len(h) else np.nan
+            avg20=float(h["Volume"].tail(20).mean()) if len(h) else np.nan
+            vol_ratio=(vol/avg20) if pd.notna(vol) and pd.notna(avg20) and avg20>0 else np.nan
+            ma20=float(h["Close"].tail(20).mean()) if len(h)>=5 else np.nan
+            high20=float(h["High"].tail(20).iloc[:-1].max()) if len(h)>1 else np.nan
+
+            c1,c2,c3=st.columns(3)
+            c1.metric(f"{period}外資估算成本",f"{cost:,.2f}")
+            c2.metric("現價距成本",f"{dist:+.2f}%")
+            c3.metric("今日量 / 20日均量",f"{vol_ratio:.2f}x" if pd.notna(vol_ratio) else "—")
+
+            signals=[]
+            if -3 <= dist <= 3 and net>0 and (pd.isna(vol_ratio) or vol_ratio<1.0):
+                signals.append(("🟢 成本防守觀察","股價位於外資估算成本 ±3% 內、區間外資仍偏買方，且量能未明顯放大；可觀察成本帶是否形成支撐。"))
+            if pd.notna(vol_ratio) and vol_ratio>=1.5 and current>cost and (pd.isna(high20) or current>=high20):
+                signals.append(("🟢 突破／動能觀察","現價高於外資估算成本且量能達20日均量1.5倍以上；若同時突破近期高點，可視為量價與成本方向共振。"))
+            if net>0 and abs(dist)<=8 and (pd.isna(ma20) or current>=ma20):
+                signals.append(("🟡 籌碼累積觀察","區間六大外資為淨買方，股價仍接近成本帶；可持續觀察是否出現橫盤吸收賣壓。"))
+            if dist<=-3 and net<0:
+                signals.append(("🔴 成本失守風險","現價已低於外資估算成本3%以上，且區間外資為淨賣方；成本帶目前不宜直接視為有效支撐。"))
+            if not signals:
+                signals.append(("⚪ 等待確認","目前成本、量價與外資流向沒有形成明確共振，先觀察成本帶、20日均線與量能變化。"))
+            for title,msg in signals:
+                st.markdown(f"**{title}**  \\n{msg}")
+
+            stop3=cost*0.97; stop5=cost*0.95
+            st.caption(f"風險觀察帶：成本下方3% 約 {stop3:,.2f}；下方5% 約 {stop5:,.2f}。這是風險參考區，不是自動停損指令。")
+            st.caption("判讀限制：分點不等於單一外資最終持倉；轉倉、對敲、隔日沖與跨分點交易都可能讓估算成本失真，需搭配量價、均線與後續分點流向。")
+        else:
+            st.info("目前尚無足夠的六大外資成本資料可產生策略觀察。")
+
     else: st.error("行情取得失敗："+str(price_err))
 
 with tabs[1]:
