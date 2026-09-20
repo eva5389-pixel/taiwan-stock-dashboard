@@ -627,7 +627,8 @@ with tabs[3]:
         for c in ["六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買超張數"]:
             nums=pd.to_numeric(display_rg[c],errors="coerce")
             display_rg[c]=nums.map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—").astype(str)
-        st.dataframe(display_rg,use_container_width=True,hide_index=True)
+        # 用 HTML table 顯示，避開 Streamlit dataframe -> PyArrow 的序列化路徑。
+        st.markdown(display_rg.to_html(index=False,escape=True),unsafe_allow_html=True)
         st.caption(f"分點期間使用資料庫最近 {len(chosen)} 個日期；歷史不足所選期間時只使用現有資料。TWSE官方欄位為最新交易日，分點欄位為所選期間累計。")
     else:
         st.warning("六大外資分點排行資料暫時無法取得："+str(branch_err))
