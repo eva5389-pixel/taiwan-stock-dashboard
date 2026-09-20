@@ -436,13 +436,8 @@ with tabs[1]:
             st.bar_chart(chart_df["淨買超"],horizontal=True)
             st.markdown("#### 買進 vs 賣出")
             st.bar_chart(chart_df[["買進張數","賣出張數"]],horizontal=True)
-        st.caption("此公開頁提供各券商買進、賣出、淨買賣超與成交占比；頁面顯示的『平均買超/賣超成本』是排行合計成本，不是每一家券商的個別成本，因此不把它誤標成單一券商成本。")
-        # show aggregate costs if present
-        mb=re.search(r"平均買超成本\s*([\d.]+)",text_data)
-        ms=re.search(r"平均賣超成本\s*([\d.]+)",text_data)
-        c1,c2=st.columns(2)
-        c1.metric("排行平均買超成本",mb.group(1) if mb else "—")
-        c2.metric("排行平均賣超成本",ms.group(1) if ms else "—")
+        st.caption("此公開頁提供各券商買進、賣出、淨買賣超與成交占比；公開頁的排行平均成本不是六大外資成本，因此不顯示，避免把排行序號誤認成股價。")
+        st.info("六大外資成本請以上方「六大外資分點進出成本」的流量加權估算為準。")
     else:
         st.warning("富邦個股分點資料讀取失敗："+str(fubon_err))
     st.link_button("富邦 eBrokerDJ 個股分點原始頁",fubon_url)
