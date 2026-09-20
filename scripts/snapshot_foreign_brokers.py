@@ -29,7 +29,12 @@ BROKER_IDS={"台灣摩根士丹利":"1470","摩根大通":"8440","美商高盛":
 
 def fetch_broker_history(symbol, broker, broker_id):
     """抓單一分點歷史頁。公開頁日期格式為 YYYY/MM/DD。"""
-    url=f"https://justdata.moneydj.com/z/zc/zco/zco0/zco0.djhtm?BHID={broker_id}&a={symbol}&b={broker_id}"
+    # 富邦 eBrokerDJ 自設區間：C=1, D=起日, E=迄日, ver=V3。
+    # 往前抓 400 個日曆日，目標涵蓋約 240 個交易日。
+    end=datetime.now(tz).date()
+    start=end-timedelta(days=400)
+    url=(f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco0/zco0.djhtm"
+         f"?a={symbol}&BHID={broker_id}&b={broker_id}&C=1&D={start.isoformat()}&E={end.isoformat()}&ver=V3")
     r=requests.get(url,headers=HEADERS,timeout=20); r.raise_for_status()
     r.encoding=r.apparent_encoding
     txt=BeautifulSoup(r.text,"html.parser").get_text(" ",strip=True)
