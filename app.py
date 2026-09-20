@@ -622,7 +622,7 @@ with tabs[3]:
         cols=["代號","名稱","題材","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買超張數","籌碼訊號"]
         st.dataframe(rg.head(top_branch)[cols],use_container_width=True,hide_index=True,
             column_config={
-                "六大分點買進張數":st.column_config.NumberColumn("六大分點買進張數",format="%d 張"),
+                "六大分點買進張數":st.column_config.NumberColumn("六大分點買進張數",format="%d"),
                 "六大分點賣出張數":st.column_config.NumberColumn("六大分點賣出張數",format="%d 張"),
                 "六大分點淨買賣":st.column_config.NumberColumn("六大分點淨買賣",format="%d 張"),
                 "外資買超張數":st.column_config.NumberColumn("官方外資買超張數",format="%d 張"),
