@@ -360,6 +360,20 @@ branch_err="WantGoo 僅提供瀏覽器登入後查閱；Streamlit 不直接爬�
 
 costs=market_costs(h) if not h.empty else {}
 
+# 股票名稱供個股期貨等分頁共用；避免只在其他分頁的區域變數中取得。
+stock_name=""
+try:
+    rr=requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",headers=HEADERS,timeout=15)
+    if rr.ok:
+        dd=pd.DataFrame(rr.json())
+        cc=next((c for c in dd.columns if "Code" in str(c) or "證券代號" in str(c)),None)
+        nn=next((c for c in dd.columns if "Name" in str(c) or "證券名稱" in str(c)),None)
+        if cc and nn:
+            hit=dd[dd[cc].astype(str).str.strip()==symbol]
+            if not hit.empty: stock_name=str(hit.iloc[0][nn]).strip()
+except Exception:
+    pass
+
 tabs=st.tabs(["🏠 總覽","🏦 分點成本","🌍 外資追蹤","📈 個股期貨","📊 大盤期貨","🇺🇸 Pelosi","📢 重大訊息"])
 with tabs[0]:
     st.subheader(f"{symbol} 自動更新總覽")
