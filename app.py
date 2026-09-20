@@ -608,7 +608,14 @@ with tabs[3]:
         cost_rows=[]
         for sym in rg["symbol"].tolist():
             sh=ah[ah["symbol"].astype(str).str.replace(".0","",regex=False).str.zfill(4)==sym].copy()
-            try: yh,_=yahoo_history(sym)
+            try:
+                yh,_=yahoo_history(sym)
+                if not yh.empty:
+                    # yahoo_history 可能已把 Date 留在欄位；統一交給成本函式前建立可配對日期索引。
+                    if "Date" in yh.columns:
+                        yh=yh.set_index("Date")
+                    elif "date" in yh.columns:
+                        yh=yh.set_index("date")
             except Exception: yh=pd.DataFrame()
             cost30,used30=flow_weighted_cost(sh,yh,30) if not sh.empty and not yh.empty else (np.nan,0)
             cost_rows.append({"symbol":sym,"分點30日估算成本":cost30,"分點成本實際日數":used30})
@@ -651,7 +658,8 @@ with tabs[3]:
         st.markdown(display_rg.to_html(index=False,escape=True),unsafe_allow_html=True)
         branch_start=pd.to_datetime(min(chosen)).strftime("%Y-%m-%d") if len(chosen) else "—"
         branch_end=pd.to_datetime(max(chosen)).strftime("%Y-%m-%d") if len(chosen) else "—"
-        st.caption(f"分點統計期間：{branch_start} ～ {branch_end}（實際 {len(chosen)} 個資料日；選擇 {rank_days} 日）。外資買進／賣出／買超張數期間：最新交易日（TWSE T86 單日）。30日成本欄另顯示實際可配對交易日數；不足30日時不是完整30日成本。")
+        st.info(f"期間口徑不同：六大分點買進／賣出／淨買賣＝{branch_start} ～ {branch_end} 累計（實際 {len(chosen)} 個資料日；目前選擇 {rank_days} 日）；TWSE 外資買進／賣出／買超＝最新交易日單日。因此兩邊張數不能直接比大小。")
+        st.caption("分點30日估算成本＝六大外資分點每日買進張數 × 當日典型價 [(高+低+收)/3] 的加權平均；「分點成本實際日數」顯示真正成功配對的交易日，未滿30日會明確保留實際日數。")
     else:
         st.warning("六大外資分點排行資料暫時無法取得："+str(branch_err))
     st.divider()
