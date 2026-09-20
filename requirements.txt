@@ -1,3 +1,4 @@
 streamlit>=1.40\npandas>=2.0\nnumpy>=1.26\nrequests>=2.31\nyfinance>=0.2.54\nlxml>=5.0\nhtml5lib>=1.1\n
 beautifulsoup4>=4.12
 plotly>=5.24
+lxml>=5.0
