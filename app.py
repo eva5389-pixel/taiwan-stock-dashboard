@@ -251,7 +251,7 @@ def option_value_split(spot,strike,premium,cp):
 
 @st.cache_data(ttl=900)
 def twse_foreign_buy_rank():
-    """TWSE 最新上市個股外資買賣超；排除 ETF/ETN，只保留四位數普通股票代號。"""
+    """TWSE 最新上市個股外資買賣超；回傳所有四位數普通股，不只買超股。"""
     url="https://openapi.twse.com.tw/v1/fund/T86"
     try:
         r=requests.get(url,headers=HEADERS,timeout=20); r.raise_for_status()
@@ -259,17 +259,23 @@ def twse_foreign_buy_rank():
         if d.empty: return pd.DataFrame(),url,"TWSE 回傳空資料"
         code=next((c for c in d.columns if "證券代號" in str(c)),None)
         name=next((c for c in d.columns if "證券名稱" in str(c)),None)
-        net=next((c for c in d.columns if "外陸資買賣超股數" in str(c) and "不含外資自營商" in str(c)),None)
-        buy=next((c for c in d.columns if "外陸資買進股數" in str(c) and "不含外資自營商" in str(c)),None)
-        sell=next((c for c in d.columns if "外陸資賣出股數" in str(c) and "不含外資自營商" in str(c)),None)
-        if not all([code,name,net]): return pd.DataFrame(),url,"找不到 TWSE 外資欄位"
+        # TWSE 欄名可能有「外陸資」或「外資及陸資」，用關鍵字而非完整固定字串。
+        def pick(kind):
+            cand=[c for c in d.columns if ("外陸資" in str(c) or "外資及陸資" in str(c)) and kind in str(c) and "自營商" not in str(c)]
+            if not cand:
+                cand=[c for c in d.columns if ("外陸資" in str(c) or "外資及陸資" in str(c)) and kind in str(c)]
+            return cand[0] if cand else None
+        buy=pick("買進股數"); sell=pick("賣出股數"); net=pick("買賣超股數")
+        if not code or not name or not net:
+            return pd.DataFrame(),url,"找不到 TWSE 外資欄位："+",".join(map(str,d.columns))
         out=pd.DataFrame({"代號":d[code].astype(str).str.strip(),"名稱":d[name].astype(str).str.strip()})
         for label,col in [("外資買進股數",buy),("外資賣出股數",sell),("外資買賣超股數",net)]:
             out[label]=pd.to_numeric(d[col].astype(str).str.replace(",","",regex=False),errors="coerce") if col else np.nan
         out=out[out["代號"].str.fullmatch(r"\d{4}",na=False)].copy()
+        out["外資買進張數"]=out["外資買進股數"]/1000
+        out["外資賣出張數"]=out["外資賣出股數"]/1000
         out["外資買超張數"]=out["外資買賣超股數"]/1000
-        out=out[out["外資買超張數"]>0].sort_values("外資買超張數",ascending=False)
-        return out,url,None
+        return out.sort_values("外資買超張數",ascending=False),url,None
     except Exception as e:
         return pd.DataFrame(),url,str(e)
 
