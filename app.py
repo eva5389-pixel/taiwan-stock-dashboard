@@ -61,6 +61,43 @@ def wantgoo_branch(symbol):
         except Exception as e:last=str(e)
     return pd.DataFrame(),urls[0],locals().get("last","無法讀取 WantGoo")
 
+@st.cache_data(ttl=1800,show_spinner=False)
+def wantgoo_cost_fallback(symbol):
+    """從玩股網公開表格讀取六大外資分點彙總，作為缺少自有歷史時的低信賴備援。"""
+    url=f"https://www.wantgoo.com/stock/{symbol}/major-investors/branch-buysell"
+    aliases=["摩根士丹利","摩根大通","高盛","美林","瑞銀","花旗"]
+    try:
+        r=requests.get(url,headers=HEADERS,timeout=15)
+        r.raise_for_status()
+        tables=pd.read_html(StringIO(r.text))
+        candidates=[]
+        for t in tables:
+            if t.empty: continue
+            x=t.copy()
+            x.columns=[" ".join(map(str,col)).strip() if isinstance(col,tuple) else str(col).strip() for col in x.columns]
+            name_col=find_col(x.columns,["券商","分點","名稱"])
+            buy_col=find_col(x.columns,["買進張數","買張","買超張數"])
+            sell_col=find_col(x.columns,["賣出張數","賣張","賣超張數"])
+            price_col=find_col(x.columns,["買進均價","買均價","買價","均價"])
+            if not all([name_col,buy_col,sell_col,price_col]): continue
+            mask=x[name_col].astype(str).apply(lambda v:any(a in v for a in aliases))
+            y=x[mask].copy()
+            if y.empty: continue
+            y["_buy"]=clean_num(y[buy_col]); y["_sell"]=clean_num(y[sell_col]); y["_price"]=clean_num(y[price_col])
+            y=y[y["_buy"].gt(0)&y["_price"].notna()]
+            if not y.empty: candidates.append(y)
+        if not candidates:
+            return np.nan,0,url,"玩股網公開頁未提供可讀的六大外資買價欄位"
+        y=max(candidates,key=len)
+        y["_tracked"]=(y["_buy"]-y["_sell"]).clip(lower=0)
+        valid=y[y["_tracked"].gt(0)&y["_price"].notna()]
+        if valid.empty or valid["_tracked"].sum()<=0:
+            return np.nan,0,url,"玩股網分點為淨賣出或無可追蹤庫存"
+        cost=float(np.average(valid["_price"],weights=valid["_tracked"]))
+        return cost,int(len(valid)),url,None
+    except Exception as e:
+        return np.nan,0,url,str(e)
+
 @st.cache_data(ttl=900)
 def fubon_stock_brokers(symbol, period=1):
     """富邦 eBrokerDJ / MoneyDJ 個股主力進出公開頁；純 BeautifulSoup，不依賴 lxml。"""
@@ -611,33 +648,55 @@ with tabs[2]:
         show["外資買超張數"]=show["外資買超張數"].round(0)
         show["題材"]=show.apply(lambda r:stock_theme(r["代號"],r["名稱"]),axis=1)
         cost_rows=[]
-        with st.spinner("正在配對六大外資分點歷史與推估剩餘持倉成本…"):
+        with st.spinner("正在依自有歷史、玩股網與富邦順序配對成本…"):
             for sym in show["代號"].astype(str).tolist():
                 ph,_,_=foreign_history(sym)
-                if ph.empty:
-                    cost_rows.append({"代號":sym,"推估剩餘持倉成本":np.nan,"成本資料日數":0})
-                    continue
                 try:
                     _ticker,price_hist,_last,_err=stock_data(sym)
                 except Exception:
                     price_hist=pd.DataFrame()
                 available=int(ph["date"].dt.date.nunique()) if not ph.empty else 0
                 days=min(20,available)
+                cost=np.nan; used=0; source_name="無可用資料"; confidence="—"; cost_type="—"
                 if days and not price_hist.empty:
                     cost,inventory,unknown,used,_=remaining_inventory_cost(ph,price_hist,days)
-                else:
-                    cost=inventory=unknown=np.nan; used=0
-                cost_rows.append({"代號":sym,"推估剩餘持倉成本":cost,"成本資料日數":used})
+                    if pd.notna(cost):
+                        source_name="自有逐日六大分點歷史"
+                        confidence="較高"
+                        cost_type="推估剩餘持倉成本"
+                if pd.isna(cost):
+                    wg_cost,wg_used,_wg_url,_wg_err=wantgoo_cost_fallback(sym)
+                    if pd.notna(wg_cost):
+                        cost=wg_cost; used=wg_used
+                        source_name="玩股網公開分點"
+                        confidence="中低"
+                        cost_type="分點彙總成本備援"
+                if pd.isna(cost) and not price_hist.empty:
+                    ft,_,_=fubon_stock_brokers(sym,5)
+                    if ft:
+                        fd=parse_fubon_brokers(ft).dropna(subset=["買進張數"])
+                        tracked=(fd["買進張數"]-fd["賣出張數"]).clip(lower=0)
+                        d=price_hist.tail(5).copy()
+                        if tracked.sum()>0 and not d.empty and d["Volume"].fillna(0).sum()>0:
+                            typical=(d["High"]+d["Low"]+d["Close"])/3
+                            cost=float(np.average(typical,weights=d["Volume"]))
+                            used=min(5,len(d))
+                            source_name="富邦 eBrokerDJ"
+                            confidence="低"
+                            cost_type="5日買進成本備援"
+                cost_rows.append({"代號":sym,"推估剩餘持倉成本":cost,"成本資料日數":used,
+                                  "成本來源":source_name,"可信度":confidence,"成本類型":cost_type})
         show["代號"]=show["代號"].astype(str)
         show=show.merge(pd.DataFrame(cost_rows),on="代號",how="left")
         st.dataframe(
-            show[["代號","名稱","題材","外資買超張數","推估剩餘持倉成本","成本資料日數"]],
+            show[["代號","名稱","題材","外資買超張數","推估剩餘持倉成本","成本資料日數","成本來源","可信度","成本類型"]],
             use_container_width=True,hide_index=True,
             column_config={
                 "外資買超張數":st.column_config.NumberColumn(format="%.0f"),
                 "推估剩餘持倉成本":st.column_config.NumberColumn(format="%.2f"),
                 "成本資料日數":st.column_config.NumberColumn(format="%d"),
             })
+        st.caption("成本來源依序為：自有逐日分點歷史 → 玩股網公開分點 → 富邦 eBrokerDJ。只有自有逐日歷史會標示為推估剩餘持倉成本；備援資料會另外標示成本類型與可信度。")
         st.markdown("#### 外資買超排行")
         st.bar_chart(show.set_index("名稱")["外資買超張數"],horizontal=True)
         st.caption("資料來源：臺灣證券交易所最新三大法人日報；目前先顯示上市股票單日排行。下一階段可累積每日資料後增加 3／5／10／20 日連續買超與價格轉強篩選。")
