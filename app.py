@@ -490,9 +490,12 @@ with tabs[0]:
 
         available_days=int(hist["date"].dt.date.nunique()) if not hist.empty else 0
         detail_period=min(20,available_days) if available_days else 0
-        if detail_period and not detail_by_period.get(detail_period,pd.DataFrame()).empty:
+        detail_view=pd.DataFrame()
+        if detail_period:
+            _,_,_,_,detail_view=remaining_inventory_cost(hist,h,detail_period)
+        if not detail_view.empty:
             st.markdown(f"#### 各分點明細（最近 {detail_period} 個可用交易日）")
-            st.dataframe(detail_by_period[detail_period],use_container_width=True,hide_index=True,
+            st.dataframe(detail_view,use_container_width=True,hide_index=True,
                 column_config={
                     "推估剩餘庫存張數":st.column_config.NumberColumn(format="%.0f"),
                     "推估持倉成本":st.column_config.NumberColumn(format="%.2f"),
