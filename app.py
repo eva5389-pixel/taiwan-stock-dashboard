@@ -293,6 +293,28 @@ def option_value_split(spot,strike,premium,cp):
     time_value=max(premium-intrinsic,0)
     return intrinsic,time_value
 
+THEME_MAP={
+    "2330":"AI／先進製程／半導體","2317":"AI伺服器／電子代工","2454":"IC設計／AI邊緣運算",
+    "2382":"AI伺服器／電子代工","3231":"AI伺服器／電子代工","2308":"電源／AI伺服器",
+    "3017":"散熱／AI伺服器","2368":"PCB／AI伺服器","3189":"PCB／AI伺服器",
+    "2327":"被動元件／AI伺服器","2344":"記憶體","2408":"記憶體","6770":"記憶體／IC設計",
+    "3711":"封測／半導體","3037":"PCB／載板","6669":"散熱／伺服器","2376":"AI伺服器／板卡",
+    "2377":"AI伺服器／主機板","2357":"AI PC／伺服器","3661":"高速傳輸IC／半導體",
+    "2409":"面板／顯示器","3481":"面板／顯示器","6116":"面板／顯示器",
+    "2881":"金融控股／保險","2882":"金融控股／保險","2883":"金融控股／證券",
+    "2855":"證券／金融服務","1314":"石化／塑化原料","8150":"半導體封裝測試",
+    "2371":"電力設備／能源／資產題材"
+}
+
+def stock_theme(code,name=""):
+    code=str(code).replace(".0","").zfill(4)
+    if code in THEME_MAP: return THEME_MAP[code]
+    name=str(name)
+    if any(k in name for k in ["金控","銀行","票券","證券","富邦金","國泰金","凱基金"]): return "金融保險"
+    if any(k in name for k in ["光電","彩晶","友達","群創"]): return "面板／光電"
+    if any(k in name for k in ["石化","塑化"]): return "石化／塑化"
+    return "其他／待確認"
+
 @st.cache_data(ttl=900)
 def twse_foreign_buy_rank():
     """TWSE 三大法人 T86（rwd 報表 API）：上市個股外陸資買進／賣出／淨買賣。"""
@@ -587,7 +609,35 @@ with tabs[2]:
         topn=st.slider("顯示外資買超前幾名",5,30,15,5,key="foreign_rank_n")
         show=fr.head(topn).copy()
         show["外資買超張數"]=show["外資買超張數"].round(0)
-        st.dataframe(show[["代號","名稱","外資買超張數"]],use_container_width=True,hide_index=True)
+        show["題材"]=show.apply(lambda r:stock_theme(r["代號"],r["名稱"]),axis=1)
+        cost_rows=[]
+        with st.spinner("正在配對六大外資分點歷史與推估剩餘持倉成本…"):
+            for sym in show["代號"].astype(str).tolist():
+                ph,_,_=foreign_history(sym)
+                if ph.empty:
+                    cost_rows.append({"代號":sym,"推估剩餘持倉成本":np.nan,"成本資料日數":0})
+                    continue
+                try:
+                    _ticker,price_hist,_last,_err=stock_data(sym)
+                except Exception:
+                    price_hist=pd.DataFrame()
+                available=int(ph["date"].dt.date.nunique()) if not ph.empty else 0
+                days=min(20,available)
+                if days and not price_hist.empty:
+                    cost,inventory,unknown,used,_=remaining_inventory_cost(ph,price_hist,days)
+                else:
+                    cost=inventory=unknown=np.nan; used=0
+                cost_rows.append({"代號":sym,"推估剩餘持倉成本":cost,"成本資料日數":used})
+        show["代號"]=show["代號"].astype(str)
+        show=show.merge(pd.DataFrame(cost_rows),on="代號",how="left")
+        st.dataframe(
+            show[["代號","名稱","題材","外資買超張數","推估剩餘持倉成本","成本資料日數"]],
+            use_container_width=True,hide_index=True,
+            column_config={
+                "外資買超張數":st.column_config.NumberColumn(format="%.0f"),
+                "推估剩餘持倉成本":st.column_config.NumberColumn(format="%.2f"),
+                "成本資料日數":st.column_config.NumberColumn(format="%d"),
+            })
         st.markdown("#### 外資買超排行")
         st.bar_chart(show.set_index("名稱")["外資買超張數"],horizontal=True)
         st.caption("資料來源：臺灣證券交易所最新三大法人日報；目前先顯示上市股票單日排行。下一階段可累積每日資料後增加 3／5／10／20 日連續買超與價格轉強篩選。")
@@ -661,11 +711,10 @@ with tabs[3]:
             except Exception:
                 yh=pd.DataFrame()
             cost30,used30=flow_weighted_cost(sh,yh,30) if not sh.empty and not yh.empty else (np.nan,0)
-            cost_rows.append({"symbol":sym,"分點30日估算成本":cost30,"分點成本實際日數":used30})
+            cost_rows.append({"symbol":sym,"分點推估剩餘持倉成本":cost30,"分點成本實際日數":used30})
         rg=rg.merge(pd.DataFrame(cost_rows),on="symbol",how="left")
         rg=rg.sort_values("net_lots",ascending=False)
-        theme_map={"2330":"AI／先進製程／半導體","2317":"AI伺服器／電子代工","2454":"IC設計／AI邊緣運算","2382":"AI伺服器／電子代工","3231":"AI伺服器／電子代工","2308":"電源／AI伺服器","3017":"散熱／AI伺服器","2368":"PCB／AI伺服器","3189":"PCB／AI伺服器","2327":"被動元件／AI伺服器","2344":"記憶體","2408":"記憶體","6770":"記憶體／IC設計","3711":"封測／半導體","3037":"PCB／載板","6669":"散熱／伺服器","2376":"AI伺服器／板卡","2377":"AI伺服器／主機板","2357":"AI PC／伺服器","3661":"高速傳輸IC／半導體"}
-        rg["題材"]=rg["symbol"].map(theme_map).fillna("—")
+        rg["題材"]=rg.apply(lambda r:stock_theme(r["symbol"],""),axis=1)
         official=fr[["代號","名稱","外資買進張數","外資賣出張數","外資買超張數"]].copy() if not fr.empty else pd.DataFrame()
         if fr.empty and ferr:
             st.warning("TWSE官方外資資料未載入："+str(ferr))
@@ -687,7 +736,7 @@ with tabs[3]:
         rg["籌碼訊號"]=rg.apply(sync_label,axis=1)
         rg=rg.rename(columns={"symbol":"代號","buy_lots":"六大分點買進張數","sell_lots":"六大分點賣出張數","net_lots":"六大分點淨買賣"})
         top_branch=st.slider("顯示分點排行前幾名",5,30,15,5,key="branch_rank_n")
-        cols=["代號","名稱","題材","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","分點30日估算成本","外資買進張數","外資賣出張數","外資買超張數","籌碼訊號"]
+        cols=["代號","名稱","題材","六大分點買進張數","六大分點賣出張數","六大分點淨買賣","分點推估剩餘持倉成本","外資買進張數","外資賣出張數","外資買超張數","籌碼訊號"]
         display_rg=rg.head(top_branch)[cols].copy()
         # 全部轉成顯示字串，徹底避開 Streamlit Cloud / PyArrow 對 nullable dtype 的轉換差異。
         for c in ["代號","名稱","題材","籌碼訊號"]:
@@ -695,14 +744,14 @@ with tabs[3]:
         for c in ["六大分點買進張數","六大分點賣出張數","六大分點淨買賣","外資買進張數","外資賣出張數","外資買超張數"]:
             nums=pd.to_numeric(display_rg[c],errors="coerce")
             display_rg[c]=nums.map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—").astype(str)
-        costnums=pd.to_numeric(display_rg["分點30日估算成本"],errors="coerce")
-        display_rg["分點30日估算成本"]=costnums.map(lambda x: f"{x:,.2f}" if pd.notna(x) else "—").astype(str)
+        costnums=pd.to_numeric(display_rg["分點推估剩餘持倉成本"],errors="coerce")
+        display_rg["分點推估剩餘持倉成本"]=costnums.map(lambda x: f"{x:,.2f}" if pd.notna(x) else "—").astype(str)
         # 用 HTML table 顯示，避開 Streamlit dataframe -> PyArrow 的序列化路徑。
         st.markdown(display_rg.to_html(index=False,escape=True),unsafe_allow_html=True)
         branch_start=pd.to_datetime(min(chosen)).strftime("%Y-%m-%d") if len(chosen) else "—"
         branch_end=pd.to_datetime(max(chosen)).strftime("%Y-%m-%d") if len(chosen) else "—"
         st.info(f"期間口徑不同：六大分點買進／賣出／淨買賣＝{branch_start} ～ {branch_end} 累計（實際 {len(chosen)} 個資料日；目前選擇 {rank_days} 日）；TWSE 外資買進／賣出／買超＝最新交易日單日。因此兩邊張數不能直接比大小。")
-        st.caption("分點30日估算成本＝六大外資分點每日買進張數 × 當日典型價 [(高+低+收)/3] 的加權平均；「分點成本實際日數」顯示真正成功配對的交易日，未滿30日會明確保留實際日數。")
+        st.caption("分點推估剩餘持倉成本採逐日移動平均法，買進增加庫存、賣出扣除可追蹤庫存；資料不足或期初庫存無法確認時不硬填成本。")
     else:
         st.warning("六大外資分點排行資料暫時無法取得："+str(branch_err))
     st.divider()
