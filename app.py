@@ -683,14 +683,31 @@ with tabs[2]:
                                   "成本來源":source_name,"可信度":confidence,"成本類型":cost_type})
         show["代號"]=show["代號"].astype(str)
         show=show.merge(pd.DataFrame(cost_rows),on="代號",how="left")
+        show["成本狀態"]=np.where(
+            show["推估剩餘持倉成本"].notna(),
+            "已取得",
+            "自有歷史、玩股網公開欄位及富邦成本皆未取得"
+        )
+        st.markdown("#### 題材與成本")
+        compact=show[["代號","名稱","推估剩餘持倉成本","成本來源","成本類型","成本資料日數","可信度","題材","成本狀態"]].copy()
         st.dataframe(
-            show[["代號","名稱","題材","外資買超張數","推估剩餘持倉成本","成本資料日數","成本來源","可信度","成本類型"]],
-            use_container_width=True,hide_index=True,
+            compact,use_container_width=True,hide_index=True,
             column_config={
-                "外資買超張數":st.column_config.NumberColumn(format="%.0f"),
-                "推估剩餘持倉成本":st.column_config.NumberColumn(format="%.2f"),
-                "成本資料日數":st.column_config.NumberColumn(format="%d"),
+                "代號":st.column_config.TextColumn(width="small"),
+                "名稱":st.column_config.TextColumn(width="small"),
+                "推估剩餘持倉成本":st.column_config.NumberColumn(format="%.2f",width="small"),
+                "成本來源":st.column_config.TextColumn(width="medium"),
+                "成本類型":st.column_config.TextColumn(width="large"),
+                "成本資料日數":st.column_config.NumberColumn(format="%d",width="small"),
+                "可信度":st.column_config.TextColumn(width="small"),
+                "題材":st.column_config.TextColumn(width="medium"),
+                "成本狀態":st.column_config.TextColumn(width="large"),
             })
+        st.markdown("#### 當日外資買超")
+        st.dataframe(
+            show[["代號","名稱","外資買超張數"]],use_container_width=True,hide_index=True,
+            column_config={"外資買超張數":st.column_config.NumberColumn(format="%.0f")}
+        )
         st.caption("成本來源依序為：自有逐日分點歷史 → 玩股網公開分點 → 富邦 eBrokerDJ。只有自有逐日歷史會標示為推估剩餘持倉成本；備援資料會另外標示成本類型與可信度。")
         st.markdown("#### 外資買超排行")
         st.bar_chart(show.set_index("名稱")["外資買超張數"],horizontal=True)
