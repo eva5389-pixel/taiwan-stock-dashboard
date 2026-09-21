@@ -106,19 +106,58 @@ def foreign_history(symbol):
         return d.sort_values("date"),url,None
     except Exception as e: return pd.DataFrame(),url,str(e)
 
-def flow_weighted_cost(history,h,days):
-    """用每日六大外資買進張數 × 當日日線典型價，估算合計流量加權成本。"""
-    if history.empty or h.empty: return np.nan,0
-    daily=history.groupby("date",as_index=False)["buy_lots"].sum().sort_values("date").tail(days)
+def remaining_inventory_cost(history,h,days):
+    """用逐日、逐分點買賣，以移動平均法推估可追蹤的剩餘庫存與成本。"""
+    empty=pd.DataFrame(columns=["分點","推估剩餘庫存張數","推估持倉成本","現價損益%","超出可追蹤庫存賣出","資料狀態"])
+    if history.empty or h.empty: return np.nan,0,0,0,empty
+    dates=history[["date"]].dropna().drop_duplicates().sort_values("date").tail(int(days))["date"]
+    if dates.empty: return np.nan,0,0,0,empty
+    raw=history[history["date"].isin(dates)].copy()
     px=h.copy().reset_index()
     px=px.rename(columns={px.columns[0]:"date"})
-    px["date"]=pd.to_datetime(px["date"]).dt.normalize()
+    px["date"]=pd.to_datetime(px["date"],errors="coerce").dt.normalize()
     px["est_price"]=(px["High"]+px["Low"]+px["Close"])/3
-    daily["date"]=pd.to_datetime(daily["date"]).dt.normalize()
-    m=daily.merge(px[["date","est_price"]],on="date",how="inner")
-    m=m[(m["buy_lots"]>0)&m["est_price"].notna()]
-    if m.empty or m["buy_lots"].sum()<=0: return np.nan,len(m)
-    return float(np.average(m["est_price"],weights=m["buy_lots"])),len(m)
+    raw["date"]=pd.to_datetime(raw["date"],errors="coerce").dt.normalize()
+    m=raw.merge(px[["date","est_price"]],on="date",how="inner")
+    m=m.dropna(subset=["date","est_price"]).sort_values(["broker","date"])
+    if m.empty: return np.nan,0,0,0,empty
+
+    rows=[]
+    for broker,g in m.groupby("broker",sort=False):
+        inventory=0.0
+        average_cost=np.nan
+        unknown_sell=0.0
+        for _,r in g.iterrows():
+            buy=max(float(r.get("buy_lots",0) or 0),0)
+            sell=max(float(r.get("sell_lots",0) or 0),0)
+            price=float(r["est_price"])
+            if buy>0:
+                total_cost=(inventory*(average_cost if pd.notna(average_cost) else 0))+(buy*price)
+                inventory+=buy
+                average_cost=total_cost/inventory if inventory>0 else np.nan
+            if sell>0:
+                if sell>=inventory:
+                    unknown_sell+=max(sell-inventory,0)
+                    inventory=0.0
+                    average_cost=np.nan
+                else:
+                    inventory-=sell
+        status="可追蹤庫存" if inventory>0 else ("期初庫存不明／區間淨賣出" if unknown_sell>0 else "無可追蹤庫存")
+        rows.append({"分點":broker,"推估剩餘庫存張數":inventory,
+                     "推估持倉成本":average_cost,
+                     "現價損益%":np.nan,
+                     "超出可追蹤庫存賣出":unknown_sell,
+                     "資料狀態":status})
+    detail=pd.DataFrame(rows)
+    current=float(h["Close"].dropna().iloc[-1]) if h["Close"].notna().any() else np.nan
+    valid=detail[(detail["推估剩餘庫存張數"]>0)&detail["推估持倉成本"].notna()].copy()
+    if not valid.empty and pd.notna(current):
+        detail.loc[valid.index,"現價損益%"]=(current/detail.loc[valid.index,"推估持倉成本"]-1)*100
+    tracked=float(valid["推估剩餘庫存張數"].sum()) if not valid.empty else 0.0
+    composite=float(np.average(valid["推估持倉成本"],weights=valid["推估剩餘庫存張數"])) if tracked>0 else np.nan
+    unknown=float(detail["超出可追蹤庫存賣出"].sum()) if not detail.empty else 0.0
+    used=int(m["date"].nunique())
+    return composite,tracked,unknown,used,detail
 
 def market_costs(h):
     out={}
@@ -413,67 +452,67 @@ with tabs[0]:
             st.altair_chart(chart,use_container_width=True)
         else:
             st.warning("目前沒有足夠的 OHLC 行情資料可以繪製 K 線。")
-        st.markdown("### 六大外資分點進出成本")
+        st.markdown("### 六大外資分點推估剩餘持倉成本")
         hist,hist_url,hist_err=foreign_history(symbol)
 
-        # 單一合併表：1/5 日使用目前公開分點資料；20/30/60 日優先使用已累積的每日歷史。
-        # 歷史尚不足時仍以現有可配對交易日計算並清楚標示，不再顯示上下兩張重複表格。
         rows=[]
-        for n in [1,5]:
-            txt,src,err=fubon_stock_brokers(symbol,n)
-            if txt:
-                bdf=parse_fubon_brokers(txt)
-                vb=bdf.dropna(subset=["買進張數"])
-                buy=float(vb["買進張數"].sum()) if not vb.empty else np.nan
-                sell=float(vb["賣出張數"].sum()) if not vb.empty else np.nan
-                net=buy-sell if pd.notna(buy) and pd.notna(sell) else np.nan
-                d=h.tail(n).copy()
-                if not d.empty and d["Volume"].fillna(0).sum()>0:
-                    typical=(d["High"]+d["Low"]+d["Close"])/3
-                    cost=float(np.average(typical,weights=d["Volume"]))
-                else:
-                    cost=np.nan
-                rows.append({"期間":f"{n}日","六大外資買進張數":buy,"六大外資賣出張數":sell,
-                             "六大外資淨買賣":net,"六大外資估算成本":cost,
-                             "現價距估算成本%":((current/cost-1)*100 if pd.notna(cost) and cost else np.nan),
-                             "可配對交易日":n if pd.notna(cost) else 0})
-
-        for n in [20,30,60,120,240]:
-            cost,used=flow_weighted_cost(hist,h,n) if not hist.empty else (np.nan,0)
+        detail_by_period={}
+        for n in [1,5,20,30,60,120,240]:
             if not hist.empty:
                 hd=hist.sort_values("date").groupby("date",as_index=False)[["buy_lots","sell_lots","net_lots"]].sum().tail(n)
                 buy=float(hd["buy_lots"].sum()) if not hd.empty else np.nan
                 sell=float(hd["sell_lots"].sum()) if not hd.empty else np.nan
                 net=float(hd["net_lots"].sum()) if not hd.empty else np.nan
+                cost,inventory,unknown,used,detail=remaining_inventory_cost(hist,h,n)
+                detail_by_period[n]=detail
             else:
-                buy=sell=net=np.nan
+                buy=sell=net=cost=np.nan
+                inventory=unknown=used=0
+                detail_by_period[n]=pd.DataFrame()
             rows.append({"期間":f"{n}日","六大外資買進張數":buy,"六大外資賣出張數":sell,
-                         "六大外資淨買賣":net,"六大外資估算成本":cost,
-                         "現價距估算成本%":((current/cost-1)*100 if pd.notna(cost) and cost else np.nan),
+                         "六大外資淨買賣":net,"推估剩餘庫存張數":inventory,
+                         "推估剩餘持倉成本":cost,
+                         "現價距推估成本%":((current/cost-1)*100 if pd.notna(cost) and cost else np.nan),
+                         "期初庫存不明賣出張數":unknown,
                          "可配對交易日":used})
 
         fc=pd.DataFrame(rows)
         st.dataframe(fc,use_container_width=True,hide_index=True,
             column_config={
-                "六大外資估算成本":st.column_config.NumberColumn(format="%.2f"),
-                "現價距估算成本%":st.column_config.NumberColumn(format="%.2f%%"),
+                "推估剩餘持倉成本":st.column_config.NumberColumn(format="%.2f"),
+                "現價距推估成本%":st.column_config.NumberColumn(format="%.2f%%"),
                 "六大外資買進張數":st.column_config.NumberColumn(format="%.0f"),
                 "六大外資賣出張數":st.column_config.NumberColumn(format="%.0f"),
                 "六大外資淨買賣":st.column_config.NumberColumn(format="%.0f"),
+                "推估剩餘庫存張數":st.column_config.NumberColumn(format="%.0f"),
+                "期初庫存不明賣出張數":st.column_config.NumberColumn(format="%.0f"),
             })
-        if not hist.empty:
-            st.caption(f"每日歷史目前可用 {hist['date'].dt.date.nunique()} 個交易日。20／30／60／半年(120交易日)／一年(240交易日)會用已回補／累積的實際分點歷史計算；可配對交易日會直接顯示資料完整度。")
-        else:
-            st.caption("1／5 日已有公開分點資料；20／30／60／半年／一年需等歷史回補資料寫入後才會產生六大外資專屬成本。")
-        st.caption("估算公式：Σ（每日六大外資買進張數 × 當日估算成交價）÷ Σ每日六大外資買進張數。")
 
-        # 依成本、量價與外資流向產生「條件式」交易觀察，不把分點成本視為精確持倉成本。
-        st.markdown("### 🧭 外資成本交易策略觀察")
-        valid_fc=fc.dropna(subset=["六大外資估算成本"]).copy()
+        available_days=int(hist["date"].dt.date.nunique()) if not hist.empty else 0
+        detail_period=min(20,available_days) if available_days else 0
+        if detail_period and not detail_by_period.get(detail_period,pd.DataFrame()).empty:
+            st.markdown(f"#### 各分點明細（最近 {detail_period} 個可用交易日）")
+            st.dataframe(detail_by_period[detail_period],use_container_width=True,hide_index=True,
+                column_config={
+                    "推估剩餘庫存張數":st.column_config.NumberColumn(format="%.0f"),
+                    "推估持倉成本":st.column_config.NumberColumn(format="%.2f"),
+                    "現價損益%":st.column_config.NumberColumn(format="%.2f%%"),
+                    "超出可追蹤庫存賣出":st.column_config.NumberColumn(format="%.0f"),
+                })
+
+        if not hist.empty:
+            st.caption(f"每日歷史目前可用 {available_days} 個交易日。成本採逐日、逐分點移動平均法：買進增加庫存，賣出按當時平均成本扣除庫存。")
+        else:
+            st.caption("尚無逐日分點歷史，因此不顯示持倉成本。")
+        st.caption("「推估剩餘持倉成本」不是券商實際帳簿成本；若賣出超過本系統可追蹤庫存，會列入「期初庫存不明賣出張數」，不以假資料補成本。")
+
+        # 依成本、量價與外資流向產生「條件式」交易觀察，不把推估成本視為精確實際持倉成本。
+        st.markdown("### 🧭 外資推估持倉成本交易策略觀察")
+        valid_fc=fc.dropna(subset=["推估剩餘持倉成本"]).copy()
         if not valid_fc.empty:
             pref=valid_fc[valid_fc["期間"].isin(["20日","60日","120日","240日"])]
             base=pref.iloc[-1] if not pref.empty else valid_fc.iloc[-1]
-            cost=float(base["六大外資估算成本"])
+            cost=float(base["推估剩餘持倉成本"])
             period=str(base["期間"])
             net=float(base["六大外資淨買賣"]) if pd.notna(base["六大外資淨買賣"]) else 0.0
             dist=(current/cost-1)*100 if cost else np.nan
@@ -484,19 +523,19 @@ with tabs[0]:
             high20=float(h["High"].tail(20).iloc[:-1].max()) if len(h)>1 else np.nan
 
             c1,c2,c3=st.columns(3)
-            c1.metric(f"{period}外資估算成本",f"{cost:,.2f}")
+            c1.metric(f"{period}外資推估持倉成本",f"{cost:,.2f}")
             c2.metric("現價距成本",f"{dist:+.2f}%")
             c3.metric("今日量 / 20日均量",f"{vol_ratio:.2f}x" if pd.notna(vol_ratio) else "—")
 
             signals=[]
             if -3 <= dist <= 3 and net>0 and (pd.isna(vol_ratio) or vol_ratio<1.0):
-                signals.append(("🟢 成本防守觀察","股價位於外資估算成本 ±3% 內、區間外資仍偏買方，且量能未明顯放大；可觀察成本帶是否形成支撐。"))
+                signals.append(("🟢 成本防守觀察","股價位於外資推估持倉成本 ±3% 內、區間外資仍偏買方，且量能未明顯放大；可觀察成本帶是否形成支撐。"))
             if pd.notna(vol_ratio) and vol_ratio>=1.5 and current>cost and (pd.isna(high20) or current>=high20):
-                signals.append(("🟢 突破／動能觀察","現價高於外資估算成本且量能達20日均量1.5倍以上；若同時突破近期高點，可視為量價與成本方向共振。"))
+                signals.append(("🟢 突破／動能觀察","現價高於外資推估持倉成本且量能達20日均量1.5倍以上；若同時突破近期高點，可視為量價與成本方向共振。"))
             if net>0 and abs(dist)<=8 and (pd.isna(ma20) or current>=ma20):
                 signals.append(("🟡 籌碼累積觀察","區間六大外資為淨買方，股價仍接近成本帶；可持續觀察是否出現橫盤吸收賣壓。"))
             if dist<=-3 and net<0:
-                signals.append(("🔴 成本失守風險","現價已低於外資估算成本3%以上，且區間外資為淨賣方；成本帶目前不宜直接視為有效支撐。"))
+                signals.append(("🔴 成本失守風險","現價已低於外資推估持倉成本3%以上，且區間外資為淨賣方；成本帶目前不宜直接視為有效支撐。"))
             if not signals:
                 signals.append(("⚪ 等待確認","目前成本、量價與外資流向沒有形成明確共振，先觀察成本帶、20日均線與量能變化。"))
             for title,msg in signals:
