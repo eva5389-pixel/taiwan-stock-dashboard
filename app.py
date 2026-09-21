@@ -671,19 +671,14 @@ with tabs[2]:
                         source_name="玩股網公開分點"
                         confidence="中低"
                         cost_type="分點彙總成本備援"
-                if pd.isna(cost) and not price_hist.empty:
-                    ft,_,_=fubon_stock_brokers(sym,5)
-                    if ft:
-                        fd=parse_fubon_brokers(ft).dropna(subset=["買進張數"])
-                        tracked=(fd["買進張數"]-fd["賣出張數"]).clip(lower=0)
-                        d=price_hist.tail(5).copy()
-                        if tracked.sum()>0 and not d.empty and d["Volume"].fillna(0).sum()>0:
-                            typical=(d["High"]+d["Low"]+d["Close"])/3
-                            cost=float(np.average(typical,weights=d["Volume"]))
-                            used=min(5,len(d))
-                            source_name="富邦 eBrokerDJ"
-                            confidence="低"
-                            cost_type="5日買進成本備援"
+                if pd.isna(cost):
+                    fb_buy,fb_sell,_fb_url,_fb_err=fubon_period_summary(sym,"5")
+                    if pd.notna(fb_buy) and fb_buy>0:
+                        cost=float(fb_buy)
+                        used=5
+                        source_name="富邦 eBrokerDJ"
+                        confidence="低"
+                        cost_type="5日主力平均買超成本（非六大外資剩餘庫存）"
                 cost_rows.append({"代號":sym,"推估剩餘持倉成本":cost,"成本資料日數":used,
                                   "成本來源":source_name,"可信度":confidence,"成本類型":cost_type})
         show["代號"]=show["代號"].astype(str)
