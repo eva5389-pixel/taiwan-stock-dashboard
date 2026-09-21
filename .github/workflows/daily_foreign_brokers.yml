@@ -4,6 +4,10 @@ on:
   schedule:
     - cron: "30 8 * * 1-5"
   workflow_dispatch:
+  push:
+    paths:
+      - "scripts/snapshot_foreign_brokers.py"
+      - ".github/workflows/daily_foreign_brokers.yml"
 
 permissions:
   contents: write
