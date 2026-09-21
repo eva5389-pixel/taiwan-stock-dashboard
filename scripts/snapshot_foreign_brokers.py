@@ -6,7 +6,30 @@ from pathlib import Path
 
 HEADERS={"User-Agent":"Mozilla/5.0"}
 NAMES=["台灣摩根士丹利","摩根大通","美商高盛","美林","新加坡商瑞銀","花旗環球"]
-WATCHLIST=["2330","2317","2454","2382","3231","2308","3017","2368","3189","2327","2344","2408","6770","3711","3037","6669","2376","2377","2357","3661"]
+CORE_WATCHLIST=["2330","2317","2454","2382","3231","2308","3017","2368","3189","2327","2344","2408","6770","3711","3037","6669","2376","2377","2357","3661",
+                "2409","3481","2883","1314","6116","8150","2371","2881","2855","2882"]
+
+def fetch_foreign_top(limit=30):
+    """取得 TWSE 最新外資買超前 N 名上市股票，動態加入每日分點追蹤。"""
+    url="https://www.twse.com.tw/rwd/zh/fund/T86?selectType=ALL&response=json"
+    try:
+        j=requests.get(url,headers=HEADERS,timeout=20).json()
+        fields=j.get("fields",[]); data=j.get("data",[])
+        code_i=fields.index("證券代號")
+        net_i=fields.index("外陸資買賣超股數(不含外資自營商)")
+        ranked=[]
+        for row in data:
+            code=str(row[code_i]).strip()
+            if not re.fullmatch(r"\d{4}",code): continue
+            try: net=int(str(row[net_i]).replace(",","").replace("+",""))
+            except Exception: continue
+            if net>0: ranked.append((net,code))
+        return [code for _,code in sorted(ranked,reverse=True)[:int(limit)]]
+    except Exception as e:
+        print("TWSE top foreign ranking unavailable:",e)
+        return []
+
+WATCHLIST=sorted(set(CORE_WATCHLIST+fetch_foreign_top(30)))
 OUT=Path("data/foreign_broker_history.csv")
 OUT.parent.mkdir(exist_ok=True)
 
@@ -58,7 +81,16 @@ if OUT.exists():
     with OUT.open(encoding="utf-8") as f: existing=list(csv.DictReader(f))
 seen={(r["date"],r["symbol"],r["broker"]) for r in existing}
 new=[]
+existing_symbols={str(r.get("symbol","")).zfill(4) for r in existing}
+existing_dates={}
+for r in existing:
+    sym=str(r.get("symbol","")).zfill(4)
+    existing_dates.setdefault(sym,set()).add(r.get("date",""))
+
+# 新加入的股票先回補近400日；已有至少20日資料者不必每天重抓完整歷史。
 for symbol in WATCHLIST:
+    if symbol in existing_symbols and len(existing_dates.get(symbol,set()))>=20:
+        continue
     for broker,broker_id in BROKER_IDS.items():
         try:
             for row in fetch_broker_history(symbol,broker,broker_id):
@@ -80,4 +112,4 @@ rows=existing+new
 with OUT.open("w",newline="",encoding="utf-8") as f:
     w=csv.DictWriter(f,fieldnames=["date","symbol","broker","buy_lots","sell_lots","net_lots"])
     w.writeheader(); w.writerows(rows)
-print(f"added {len(new)} rows")
+print(f"tracking {len(WATCHLIST)} symbols; added {len(new)} rows; dynamic top30={len(set(WATCHLIST)-set(CORE_WATCHLIST))}")
