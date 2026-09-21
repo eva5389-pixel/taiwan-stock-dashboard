@@ -159,6 +159,11 @@ def remaining_inventory_cost(history,h,days):
     used=int(m["date"].nunique())
     return composite,tracked,unknown,used,detail
 
+def flow_weighted_cost(history,h,days):
+    """相容舊介面；成本已改採剩餘庫存移動平均推估。"""
+    cost,_,_,used,_=remaining_inventory_cost(history,h,days)
+    return cost,used
+
 def market_costs(h):
     out={}
     for n in [5,10,20,60]:
@@ -457,8 +462,9 @@ with tabs[0]:
 
         rows=[]
         detail_by_period={}
+        available_days=int(hist["date"].dt.date.nunique()) if not hist.empty else 0
         for n in [1,5,20,30,60,120,240]:
-            if not hist.empty:
+            if not hist.empty and n<=available_days:
                 hd=hist.sort_values("date").groupby("date",as_index=False)[["buy_lots","sell_lots","net_lots"]].sum().tail(n)
                 buy=float(hd["buy_lots"].sum()) if not hd.empty else np.nan
                 sell=float(hd["sell_lots"].sum()) if not hd.empty else np.nan
@@ -466,8 +472,8 @@ with tabs[0]:
                 cost,inventory,unknown,used,detail=remaining_inventory_cost(hist,h,n)
                 detail_by_period[n]=detail
             else:
-                buy=sell=net=cost=np.nan
-                inventory=unknown=used=0
+                buy=sell=net=cost=inventory=unknown=np.nan
+                used=available_days if not hist.empty else 0
                 detail_by_period[n]=pd.DataFrame()
             rows.append({"期間":f"{n}日","六大外資買進張數":buy,"六大外資賣出張數":sell,
                          "六大外資淨買賣":net,"推估剩餘庫存張數":inventory,
