@@ -9,13 +9,15 @@ NAMES=["台灣摩根士丹利","摩根大通","美商高盛","美林","新加坡
 CORE_WATCHLIST=["2330","2317","2454","2382","3231","2308","3017","2368","3189","2327","2344","2408","6770","3711","3037","6669","2376","2377","2357","3661",
                 "2409","3481","2883","1314","6116","8150","2371","2881","2855","2882"]
 
-def fetch_foreign_top(limit=30):
-    """取得 TWSE 最新外資買超前 N 名上市股票，動態加入每日分點追蹤。"""
+def fetch_foreign_rank(limit=30, date=None):
+    """取得 TWSE 指定日外資買超排行；同時保存候選日期、名稱、排名與淨買超。"""
     url="https://www.twse.com.tw/rwd/zh/fund/T86?selectType=ALL&response=json"
+    if date: url+=f"&date={date.strftime('%Y%m%d')}"
     try:
         j=requests.get(url,headers=HEADERS,timeout=20).json()
         fields=j.get("fields",[]); data=j.get("data",[])
         code_i=fields.index("證券代號")
+        name_i=fields.index("證券名稱")
         net_i=fields.index("外陸資買賣超股數(不含外資自營商)")
         ranked=[]
         for row in data:
@@ -23,15 +25,23 @@ def fetch_foreign_top(limit=30):
             if not re.fullmatch(r"\d{4}",code): continue
             try: net=int(str(row[net_i]).replace(",","").replace("+",""))
             except Exception: continue
-            if net>0: ranked.append((net,code))
-        return [code for _,code in sorted(ranked,reverse=True)[:int(limit)]]
+            if net>0: ranked.append((net,code,str(row[name_i]).strip()))
+        ranked=sorted(ranked,reverse=True)[:int(limit)]
+        raw_report_date=str(j.get("date","")).strip()
+        try:
+            report_date=datetime.strptime(raw_report_date,"%Y%m%d").date().isoformat()
+        except ValueError:
+            report_date=(date or datetime.now(tz).date()).isoformat()
+        return [{"date":report_date,"symbol":code,"name":name,"rank":rank,
+                 "foreign_net_lots":round(net/1000,3)}
+                for rank,(net,code,name) in enumerate(ranked,1)]
     except Exception as e:
         print("TWSE top foreign ranking unavailable:",e)
         return []
 
-WATCHLIST=sorted(set(CORE_WATCHLIST+fetch_foreign_top(30)))
 OUT=Path("data/foreign_broker_history.csv")
 OUT.parent.mkdir(exist_ok=True)
+CANDIDATE_OUT=Path("data/foreign_candidate_history.csv")
 
 def fetch(symbol):
     url=f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco_{symbol}.djhtm"
@@ -76,6 +86,33 @@ def fetch_broker_history(symbol, broker, broker_id):
 
 
 today=datetime.now(tz).date().isoformat()
+
+# 每次排程回補最近5個有資料的交易日，讓昨日候選即使今天未入榜仍能繼續追蹤。
+candidate_existing=[]
+if CANDIDATE_OUT.exists():
+    with CANDIDATE_OUT.open(encoding="utf-8") as f: candidate_existing=list(csv.DictReader(f))
+candidate_seen={(r["date"],r["symbol"]) for r in candidate_existing}
+candidate_new=[]
+trading_days=[]
+for offset in range(0,15):
+    day=datetime.now(tz).date()-timedelta(days=offset)
+    rows_for_day=fetch_foreign_rank(30,day)
+    if not rows_for_day: continue
+    report_date=rows_for_day[0]["date"]
+    if report_date not in trading_days: trading_days.append(report_date)
+    for row in rows_for_day:
+        key=(row["date"],row["symbol"])
+        if key not in candidate_seen:
+            candidate_new.append(row); candidate_seen.add(key)
+    if len(trading_days)>=5: break
+
+candidate_rows=candidate_existing+candidate_new
+with CANDIDATE_OUT.open("w",newline="",encoding="utf-8") as f:
+    w=csv.DictWriter(f,fieldnames=["date","symbol","name","rank","foreign_net_lots"])
+    w.writeheader(); w.writerows(candidate_rows)
+
+recent_candidate_symbols=[r["symbol"] for r in candidate_rows if r["date"] in set(trading_days)]
+WATCHLIST=sorted(set(CORE_WATCHLIST+recent_candidate_symbols))
 existing=[]
 if OUT.exists():
     with OUT.open(encoding="utf-8") as f: existing=list(csv.DictReader(f))
@@ -112,4 +149,5 @@ rows=existing+new
 with OUT.open("w",newline="",encoding="utf-8") as f:
     w=csv.DictWriter(f,fieldnames=["date","symbol","broker","buy_lots","sell_lots","net_lots"])
     w.writeheader(); w.writerows(rows)
-print(f"tracking {len(WATCHLIST)} symbols; added {len(new)} rows; dynamic top30={len(set(WATCHLIST)-set(CORE_WATCHLIST))}")
+print(f"tracking {len(WATCHLIST)} symbols; added {len(new)} broker rows; "
+      f"added {len(candidate_new)} candidate rows; dynamic top30={len(set(WATCHLIST)-set(CORE_WATCHLIST))}")

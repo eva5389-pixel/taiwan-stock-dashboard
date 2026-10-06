@@ -6,6 +6,7 @@ import re
 from io import StringIO
 from bs4 import BeautifulSoup
 from datetime import datetime
+from pathlib import Path
 
 st.set_page_config(page_title="台股成本儀表板",page_icon="📊",layout="wide")
 st.title("📊 台股成本・籌碼儀表板")
@@ -382,6 +383,81 @@ def twse_foreign_buy_rank():
     except Exception as e:
         return pd.DataFrame(),url,"TWSE T86錯誤："+repr(e)
 
+@st.cache_data(ttl=300)
+def foreign_candidate_history():
+    """讀取每日外資買超候選快照；保留曾入榜股票，避免隔日直接消失。"""
+    local=Path(__file__).parent/"data"/"foreign_candidate_history.csv"
+    url="https://raw.githubusercontent.com/eva5389-pixel/taiwan-stock-dashboard/main/data/foreign_candidate_history.csv"
+    try:
+        d=pd.read_csv(local if local.exists() else url)
+        if d.empty: return pd.DataFrame(),url,None
+        d["date"]=pd.to_datetime(d["date"],errors="coerce")
+        d["symbol"]=d["symbol"].astype(str).str.replace(".0","",regex=False).str.zfill(4)
+        d["rank"]=pd.to_numeric(d["rank"],errors="coerce")
+        d["foreign_net_lots"]=pd.to_numeric(d["foreign_net_lots"],errors="coerce")
+        d=d.dropna(subset=["date","symbol","rank"]).sort_values(["date","rank"])
+        return d,url,None
+    except Exception as e:
+        return pd.DataFrame(),url,str(e)
+
+def candidate_holding_view(candidates,official,broker_history,topn,days=5):
+    """整理近 N 個交易日候選，並以官方外資與六大分點方向給出持有觀察。"""
+    columns=["代號","名稱","最近入榜日","近5日入榜次數","最近入榜排名","今日仍在榜",
+             "今日官方外資買超張數","近5日六大分點淨買賣","持有判定","判定理由"]
+    if candidates.empty: return pd.DataFrame(columns=columns)
+    dates=sorted(candidates["date"].dropna().dt.normalize().unique())[-int(days):]
+    recent=candidates[candidates["date"].dt.normalize().isin(dates)&(candidates["rank"]<=int(topn))].copy()
+    if recent.empty: return pd.DataFrame(columns=columns)
+    recent=recent.sort_values(["date","rank"])
+    latest=(recent.groupby("symbol",as_index=False).tail(1)
+            [["symbol","name","date","rank"]].rename(columns={"name":"名稱"}))
+    counts=recent.groupby("symbol")["date"].nunique().rename("近5日入榜次數")
+    latest=latest.merge(counts,on="symbol",how="left")
+
+    official_map=pd.Series(dtype="float64")
+    today_top=set()
+    if not official.empty:
+        off=official.copy()
+        off["代號"]=off["代號"].astype(str).str.zfill(4)
+        official_map=off.set_index("代號")["外資買超張數"]
+        today_top=set(off.head(int(topn))["代號"])
+
+    branch_map=pd.Series(dtype="float64")
+    if not broker_history.empty:
+        bh=broker_history.copy()
+        bh["date"]=pd.to_datetime(bh["date"],errors="coerce")
+        bh["symbol"]=bh["symbol"].astype(str).str.replace(".0","",regex=False).str.zfill(4)
+        bh["net_lots"]=pd.to_numeric(bh["net_lots"],errors="coerce")
+        branch_dates=sorted(bh["date"].dropna().dt.normalize().unique())[-int(days):]
+        bh=bh[bh["date"].dt.normalize().isin(branch_dates)]
+        branch_map=bh.groupby("symbol")["net_lots"].sum()
+
+    def judge(row):
+        official_net=official_map.get(row["symbol"],np.nan)
+        branch_net=branch_map.get(row["symbol"],np.nan)
+        if pd.isna(official_net) or pd.isna(branch_net):
+            return "⚪ 資料不足","缺少今日官方外資或近5日六大分點資料，不自行推定持有。"
+        if official_net>0 and branch_net>=0:
+            return "🟢 可續抱觀察","今日官方外資仍買超，近5日六大外資分點亦未轉賣；續抱但不代表適合追價。"
+        if official_net>0 and branch_net<0:
+            return "🟡 持有觀察","今日官方外資買超，但近5日六大外資分點偏賣，籌碼方向分歧。"
+        if official_net<=0 and branch_net>0:
+            return "🟡 持有觀察","今日官方外資轉為賣超或零，但近5日六大外資分點仍偏買，先觀察是否重新入榜。"
+        return "🔴 減碼／退出觀察","今日官方外資與近5日六大外資分點同步偏賣，持有條件轉弱。"
+
+    latest["今日官方外資買超張數"]=latest["symbol"].map(official_map)
+    latest["近5日六大分點淨買賣"]=latest["symbol"].map(branch_map)
+    latest["今日仍在榜"]=latest["symbol"].isin(today_top).map({True:"是",False:"否"})
+    judged=latest.apply(judge,axis=1,result_type="expand")
+    latest[["持有判定","判定理由"]]=judged
+    latest["最近入榜日"]=latest["date"].dt.strftime("%Y-%m-%d")
+    latest["最近入榜排名"]=latest["rank"].astype(int)
+    latest=latest.rename(columns={"symbol":"代號"})
+    return latest[columns].sort_values(
+        ["今日仍在榜","持有判定","近5日入榜次數","最近入榜日"],
+        ascending=[False,True,False,False]
+    )
+
 @st.cache_data(ttl=3600)
 def taifex_stock_futures_map():
     """TAIFEX 官方股票期貨標的表：用標的證券代號確認是否有股票期貨。"""
@@ -459,7 +535,7 @@ def pelosi_public():
 
 with st.sidebar:
     symbol=st.text_input("台股代號","3189").strip()
-    run=st.button("🔎 查詢 / 更新",type="primary",use_container_width=True)
+    run=st.button("🔎 查詢 / 更新",type="primary",width="stretch")
     st.caption("行情快取 5 分鐘；分點快取 15 分鐘。")
 
 ticker,h,current,price_err=stock_data(symbol)
@@ -513,7 +589,7 @@ with tabs[0]:
                 tooltip=[alt.Tooltip(f"{date_col}:T",title="日期"),alt.Tooltip("Open:Q",title="開"),alt.Tooltip("High:Q",title="高"),alt.Tooltip("Low:Q",title="低"),alt.Tooltip("Close:Q",title="收"),alt.Tooltip("Volume:Q",title="量",format=",.0f")]
             )
             chart=(rule+body).properties(height=520,title="日 K 線").interactive()
-            st.altair_chart(chart,use_container_width=True)
+            st.altair_chart(chart,width="stretch")
         else:
             st.warning("目前沒有足夠的 OHLC 行情資料可以繪製 K 線。")
         st.markdown("### 六大外資分點推估剩餘持倉成本")
@@ -542,7 +618,7 @@ with tabs[0]:
                          "可配對交易日":used})
 
         fc=pd.DataFrame(rows)
-        st.dataframe(fc,use_container_width=True,hide_index=True,
+        st.dataframe(fc,width="stretch",hide_index=True,
             column_config={
                 "推估剩餘持倉成本":st.column_config.NumberColumn(format="%.2f"),
                 "現價距推估成本%":st.column_config.NumberColumn(format="%.2f%%"),
@@ -560,7 +636,7 @@ with tabs[0]:
             _,_,_,_,detail_view=remaining_inventory_cost(hist,h,detail_period)
         if not detail_view.empty:
             st.markdown(f"#### 各分點明細（最近 {detail_period} 個可用交易日）")
-            st.dataframe(detail_view,use_container_width=True,hide_index=True,
+            st.dataframe(detail_view,width="stretch",hide_index=True,
                 column_config={
                     "推估剩餘庫存張數":st.column_config.NumberColumn(format="%.0f"),
                     "推估持倉成本":st.column_config.NumberColumn(format="%.2f"),
@@ -623,7 +699,7 @@ with tabs[1]:
     text_data,fubon_url,fubon_err=fubon_stock_brokers(symbol,period)
     if text_data:
         broker_df=parse_fubon_brokers(text_data)
-        st.dataframe(broker_df,use_container_width=True,hide_index=True)
+        st.dataframe(broker_df,width="stretch",hide_index=True)
         chart_df=broker_df.dropna(subset=["淨買超"]).set_index("主要券商")
         if not chart_df.empty:
             st.markdown("#### 六大外資券商淨買賣超")
@@ -691,7 +767,7 @@ with tabs[2]:
         st.markdown("#### 題材與成本")
         compact=show[["代號","名稱","推估剩餘持倉成本","成本來源","成本類型","成本資料日數","可信度","題材","成本狀態"]].copy()
         st.dataframe(
-            compact,use_container_width=True,hide_index=True,
+            compact,width="stretch",hide_index=True,
             column_config={
                 "代號":st.column_config.TextColumn(width="small"),
                 "名稱":st.column_config.TextColumn(width="small"),
@@ -705,13 +781,51 @@ with tabs[2]:
             })
         st.markdown("#### 當日外資買超")
         st.dataframe(
-            show[["代號","名稱","外資買超張數"]],use_container_width=True,hide_index=True,
+            show[["代號","名稱","外資買超張數"]],width="stretch",hide_index=True,
             column_config={"外資買超張數":st.column_config.NumberColumn(format="%.0f")}
         )
         st.caption("成本來源依序為：自有逐日分點歷史 → 玩股網公開分點 → 富邦 eBrokerDJ。只有自有逐日歷史會標示為推估剩餘持倉成本；備援資料會另外標示成本類型與可信度。")
         st.markdown("#### 外資買超排行")
         st.bar_chart(show.set_index("名稱")["外資買超張數"],horizontal=True)
-        st.caption("資料來源：臺灣證券交易所最新三大法人日報；目前先顯示上市股票單日排行。下一階段可累積每日資料後增加 3／5／10／20 日連續買超與價格轉強篩選。")
+        st.caption("資料來源：臺灣證券交易所最新三大法人日報；上市股票單日排行每日更新。")
+
+        st.markdown("#### :material/history: 前5個交易日候選追蹤")
+        st.caption("最近5個交易日曾進入目前排名門檻的股票都會保留；即使今天未入榜，也會依今日官方外資與近5日六大外資分點方向判定是否仍可持有觀察。")
+        ch,_,ch_err=foreign_candidate_history()
+        try:
+            broker_all=pd.read_csv(Path(__file__).parent/"data"/"foreign_broker_history.csv")
+        except Exception:
+            broker_all=pd.DataFrame()
+        holding=candidate_holding_view(ch,fr,broker_all,topn,5)
+        if not holding.empty:
+            holding_filter=st.segmented_control(
+                "持有狀態",
+                ["全部","🟢 可續抱觀察","🟡 持有觀察","🔴 減碼／退出觀察","⚪ 資料不足"],
+                default="全部",
+                key="candidate_holding_filter",
+            )
+            if holding_filter!="全部": holding=holding[holding["持有判定"]==holding_filter]
+            st.dataframe(
+                holding,
+                hide_index=True,
+                column_config={
+                    "代號":st.column_config.TextColumn(width="small",pinned=True),
+                    "名稱":st.column_config.TextColumn(width="small",pinned=True),
+                    "最近入榜日":st.column_config.TextColumn(width="small"),
+                    "近5日入榜次數":st.column_config.NumberColumn(format="%d",width="small"),
+                    "最近入榜排名":st.column_config.NumberColumn(format="%d",width="small"),
+                    "今日仍在榜":st.column_config.TextColumn(width="small"),
+                    "今日官方外資買超張數":st.column_config.NumberColumn(format="%.0f",width="small"),
+                    "近5日六大分點淨買賣":st.column_config.NumberColumn(format="%.0f",width="small"),
+                    "持有判定":st.column_config.TextColumn(width="medium"),
+                    "判定理由":st.column_config.TextColumn(width="large"),
+                },
+            )
+            st.info("判定只反映法人與六大外資分點籌碼：可續抱觀察不等於保證上漲；若股價跌破個人停損或基本面惡化，仍應優先控管風險。")
+        elif ch_err:
+            st.warning("候選歷史尚未建立："+str(ch_err))
+        else:
+            st.info("候選歷史將由每日排程自動回補最近5個交易日，首次更新完成後顯示。")
     else:
         st.warning("TWSE 外資買超排行暫時無法取得："+str(fr_err))
 
@@ -722,7 +836,7 @@ with tabs[2]:
     ft,fu,fe=fubon_stock_brokers(symbol,foreign_period)
     if ft:
         fd=parse_fubon_brokers(ft)
-        st.dataframe(fd,use_container_width=True,hide_index=True)
+        st.dataframe(fd,width="stretch",hide_index=True)
         st.caption("此頁只保留六大外資各分點的買進／賣出／淨買賣與隔日沖觀察；不再顯示個別外資成本。")
         fchart=fd.dropna(subset=["淨買超"]).set_index("主要券商")
         if not fchart.empty:
@@ -746,8 +860,8 @@ with tabs[2]:
                 daily5["六大外資分點淨買賣"]=pd.to_numeric(daily5["net_lots"],errors="coerce")
                 st.markdown("#### 📊 外資買賣超近5日變化")
                 st.caption("顯示六大外資券商分點每日合計淨買賣；正值為淨買超、負值為淨賣超。")
-                st.bar_chart(daily5.set_index("日期")["六大外資分點淨買賣"],use_container_width=True)
-                st.dataframe(daily5[["日期","六大外資分點淨買賣"]],use_container_width=True,hide_index=True)
+                st.bar_chart(daily5.set_index("日期")["六大外資分點淨買賣"],width="stretch")
+                st.dataframe(daily5[["日期","六大外資分點淨買賣"]],width="stretch",hide_index=True)
     else:
         st.warning("外資分點資料讀取失敗："+str(fe))
     st.link_button("查看資料原頁",fu)
@@ -836,7 +950,7 @@ with tabs[4]:
     if not fm.empty:
         st.success(f"{stock_name or symbol} 是 TAIFEX 股票期貨標的")
         show=fm.rename(columns={"product_code":"期貨代碼","name":"標的名稱","contract_unit":"契約單位"})[["期貨代碼","標的名稱","契約單位"]]
-        st.dataframe(show,use_container_width=True,hide_index=True)
+        st.dataframe(show,width="stretch",hide_index=True)
         # 所有股票期貨標的都使用同一套分析，不針對單一股票硬編碼。
         contracts=[]
         for _,r in fm.iterrows():
@@ -859,7 +973,7 @@ with tabs[4]:
                 if sdate and sdate in sf.columns:
                     latest=sf[sdate].astype(str).max(); sf=sf[sf[sdate].astype(str)==latest]
                 st.markdown("#### 法人期貨資料")
-                st.dataframe(sf,use_container_width=True,hide_index=True)
+                st.dataframe(sf,width="stretch",hide_index=True)
             else:
                 st.info("已確認有股票期貨；目前三大法人公開資料未找到可配對的個股列。")
     else:
@@ -906,7 +1020,7 @@ with tabs[5]:
             tx["_淨未平倉"]=tx[long_oi]-tx[short_oi]; oi_net="_淨未平倉"
 
         show=[c for c in [datec,product,ident,long_oi,short_oi,oi_net] if c]
-        st.dataframe(tx[show] if show else tx,use_container_width=True,hide_index=True)
+        st.dataframe(tx[show] if show else tx,width="stretch",hide_index=True)
 
         if oi_net and tx[oi_net].notna().any():
             if ident:
@@ -917,7 +1031,7 @@ with tabs[5]:
             st.markdown("#### 三大法人臺股期貨淨未平倉")
             plot_df=cc[[ident,oi_net]].dropna().copy()
             plot_df[oi_net]=pd.to_numeric(plot_df[oi_net],errors="coerce").fillna(0)
-            st.bar_chart(plot_df,x=ident,y=oi_net,horizontal=True,use_container_width=True)
+            st.bar_chart(plot_df,x=ident,y=oi_net,horizontal=True,width="stretch")
 
             # Heuristic classification: do not assert true intent.
             rows=[]
@@ -968,12 +1082,12 @@ with tabs[5]:
             if hedge_rows:
                 hedge=pd.DataFrame(hedge_rows)
                 st.markdown("#### 可能避險部位：口數與名目金額")
-                st.dataframe(hedge,use_container_width=True,hide_index=True)
+                st.dataframe(hedge,width="stretch",hide_index=True)
                 hv=hedge.dropna(subset=["約當億元"]).set_index("法人")
                 if not hv.empty:
                     st.bar_chart(hv["約當億元"],horizontal=True)
                 st.caption("『可能避險口數』是用途判讀的上限估計，不代表這些部位全部都是避險；金額採 TAIFEX 未平倉契約金額欄位，屬契約名目金額，不是實際投入保證金。")
-            st.dataframe(judge,use_container_width=True,hide_index=True)
+            st.dataframe(judge,width="stretch",hide_index=True)
             st.caption("⚠️ 這是推估，不是 TAIFEX 對部位用途的官方分類。期交所也明確提醒：三大法人數字是眾多機構合計互抵結果，不能代表單一法人或整類法人的交易策略。")
 
             st.markdown("#### 如何判斷")
@@ -984,7 +1098,7 @@ with tabs[5]:
         if ident and long_oi and short_oi and tx[long_oi].notna().any():
             ls=tx.groupby(ident,as_index=False)[[long_oi,short_oi]].sum()
             st.markdown("#### 多方 vs 空方未平倉")
-            st.bar_chart(ls,x=ident,y=[long_oi,short_oi],horizontal=True,use_container_width=True)
+            st.bar_chart(ls,x=ident,y=[long_oi,short_oi],horizontal=True,width="stretch")
     st.markdown("### 選擇權：內涵價值 vs 時間價值")
     st.caption("期貨本身沒有選擇權式的『時間價值／內涵價值』拆分；這裡針對臺指選擇權 TXO 計算。")
     od,ou,oe=taifex_options()
@@ -1039,7 +1153,7 @@ with tabs[5]:
                     prior=str(opt.loc[hedge_idx,"標記"]).strip()
                     opt.loc[hedge_idx,"標記"]=(prior+"｜" if prior else "")+"🛡️ 疑似外資避險觀察"
             showo=["標記"]+[c for c in [expiry_c,strike_c,cp_c,close_c,vol_c,oi_c] if c]+["內涵價值","時間價值","時間價值占權利金%"]
-            st.dataframe(opt[showo],use_container_width=True,hide_index=True)
+            st.dataframe(opt[showo],width="stretch",hide_index=True)
             if rank_c and opt[rank_c].notna().any():
                 rr=opt.loc[opt[rank_c].idxmax()]
                 st.success(f"🔥 目前口數最多：{rr.get(expiry_c,'')}｜履約價 {rr[strike_c]:,.0f}｜{rr[cp_c]}｜{rank_c} {rr[rank_c]:,.0f}")
@@ -1060,7 +1174,7 @@ with tabs[5]:
     if not md.empty:
         st.caption(f"直接顯示 {symbol} 的 TWSE OpenAPI 每日重大訊息")
         preferred=[c for c in md.columns if any(k in str(c) for k in ["日期","時間","公司代號","公司名稱","主旨","說明"])]
-        st.dataframe(md[preferred] if preferred else md,use_container_width=True,hide_index=True)
+        st.dataframe(md[preferred] if preferred else md,width="stretch",hide_index=True)
         dc=next((c for c in md.columns if "日期" in str(c)),None)
         if dc:
             counts=md[dc].astype(str).value_counts().sort_index()
